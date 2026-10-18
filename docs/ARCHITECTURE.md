@@ -17,7 +17,8 @@ graph TD
     D --> H[SpendSlice values]
     E --> H
     H --> I[SpendAggregator]
-    I --> J[SpendReport]
+    I --> J[SpendReport<br/>spend, tokens, requests]
+    J --> J2[TokenEfficiency]
     J --> A
     B --> K[CredentialStore<br/>Keychain]
     B --> L[SettingsStore<br/>JSON file]
@@ -115,6 +116,49 @@ displayed range maps to exactly one bucket.
 - **Delta** compares against `priorHeadlineRange`, the equal-length interval
   immediately before the headline (`priorComparableTotal`). Comparing a partial day against a whole day
   would manufacture a misleading number on every refresh.
+- **Counters** travel with the same folds: every series and bucket carries
+  prompt tokens, completion tokens, and requests alongside its `Decimal` amount,
+  so token volume is attributed exactly as finely as spend.
+
+## Token measures and efficiency
+
+Spend alone cannot distinguish a cheap model doing most of the work from an
+expensive one doing a little. Each `SpendReport` therefore carries the same
+period at three resolutions, and `BreakdownMeasure` selects which one the list
+ranks and plots:
+
+| Measure | Current-period denominator | Answers |
+| --- | --- | --- |
+| `spend` | `currentPeriodTotal` | what did this cost |
+| `tokens` | `currentTokens` | how much of the work was this |
+| `requests` | `currentRequests` | how many calls was this |
+
+`currentBreakdown(measure:)` and `windowBreakdown(measure:)` share one
+implementation. The denominator rule from invariant 5 extends to every measure:
+a token row under "$9.50 today" describes today's tokens, never the window's.
+Every row also carries the fixed `spendShare`, `tokenShare`, and `requestShare`
+for its period, so a token-ranked row can state the share of the bill it
+represents. That pair — 47% of tokens, 14% of spend — is the point of the
+feature; a single percentage of either kind would hide it.
+
+`TokenEfficiency` adds window-wide readings: blended cost per million tokens,
+completion-to-prompt ratio, tokens and cost per request, and an effective rate
+per series relative to the window's average.
+
+Efficiency deliberately covers the **whole window**, not the in-progress bucket.
+A partial hour rarely holds enough tokens for a blended rate or an output ratio
+to mean anything, and a figure that lurches on every refresh teaches nothing. The
+caption ("last 14 days") states the span so the block is never mistaken for the
+headline's period.
+
+Two guards keep the derived figures honest:
+
+- A blended rate mixes input and output prices, so it is only comparable between
+  models with similar prompt/completion splits. The output ratio is shown beside
+  it for that reason; neither is presented alone.
+- `priciest` ignores series holding less than 1% of the window's tokens. Forty
+  tokens against a dollar of spend implies a five-figure rate, which is rounding,
+  not a price anyone paid.
 
 ## State and failure handling
 

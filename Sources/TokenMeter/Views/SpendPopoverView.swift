@@ -157,16 +157,16 @@ struct SpendPopoverView: View {
     // MARK: - Breakdown
 
     private func breakdown(_ report: SpendReport) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let measure = effectiveMeasure(report)
+        let efficiency = report.efficiency
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("Breakdown")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
-                Text(report.currentBreakdownLabel)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                Spacer()
+                    .fixedSize()
+                Spacer(minLength: 4)
                 if model.hasBreakdown {
                     Picker("Grouping", selection: groupingBinding) {
                         ForEach(SpendGrouping.allCases) { grouping in
@@ -176,8 +176,9 @@ struct SpendPopoverView: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .controlSize(.mini)
-                    .frame(width: 148)
+                    .frame(width: 140)
                 }
+                measurePicker(report, selected: measure)
             }
 
             if report.series.isEmpty {
@@ -185,9 +186,43 @@ struct SpendPopoverView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             } else {
-                BreakdownList(rows: report.currentBreakdown)
+                BreakdownList(rows: report.currentBreakdown(measure: measure))
+            }
+
+            if efficiency.hasData {
+                Divider().opacity(0.35).padding(.vertical, 1)
+                TokenEfficiencyView(efficiency: efficiency, caption: report.windowSpanLabel)
             }
         }
+    }
+
+    /// Falls back to spend when the active measure has no data — a credential
+    /// that reports no token counts, or a window with no requests.
+    private func effectiveMeasure(_ report: SpendReport) -> BreakdownMeasure {
+        let requested = model.settings.breakdownMeasure
+        return report.supportedMeasures.contains(requested) ? requested : .spend
+    }
+
+    /// Only offered when there is something behind it, so the menu never
+    /// advertises a lens that would render an empty list.
+    private func measurePicker(_ report: SpendReport, selected: BreakdownMeasure) -> some View {
+        Picker("Measure", selection: measureBinding(selected)) {
+            ForEach(report.supportedMeasures) { measure in
+                Text(measure.title).tag(measure)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .controlSize(.mini)
+        .frame(width: 82)
+        .help("Rank the breakdown by spend, tokens, or requests")
+    }
+
+    private func measureBinding(_ selected: BreakdownMeasure) -> Binding<BreakdownMeasure> {
+        Binding(
+            get: { selected },
+            set: { newValue in model.updateSettings { $0.breakdownMeasure = newValue } }
+        )
     }
 
     private var groupingBinding: Binding<SpendGrouping> {

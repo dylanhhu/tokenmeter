@@ -41,6 +41,27 @@ public enum Money {
         return currency(amount, fractionDigits: 2)
     }
 
+    /// Blended price per million tokens, e.g. `$3.41/M`. Cheap models stay
+    /// legible instead of collapsing to `$0.00`.
+    public static func perMillion(_ amount: Decimal) -> String {
+        let magnitude = amount.magnitude
+        if magnitude > 0, magnitude < halfCent {
+            return "\(currency(amount, fractionDigits: 4))/M"
+        }
+        return "\(currency(amount, fractionDigits: 2))/M"
+    }
+
+    /// Renders a 0...1 fraction as a percentage. Nil produces an em dash so a
+    /// zero denominator never reads as 0%.
+    public static func percent(_ fraction: Double?, digits: Int = 1) -> String {
+        guard let fraction else { return "—" }
+        let percent = fraction * 100
+        if percent > 0, percent < 0.1 {
+            return "<0.1%"
+        }
+        return String(format: "%.\(digits)f%%", percent)
+    }
+
     /// Tightest useful representation for the menu bar, where horizontal space
     /// is scarce and a fixed width avoids the label jittering on every refresh.
     public static func menuBar(_ amount: Decimal) -> String {

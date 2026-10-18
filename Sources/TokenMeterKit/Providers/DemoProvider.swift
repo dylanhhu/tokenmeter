@@ -23,16 +23,77 @@ public struct DemoProvider: SpendProvider {
         var weight: Double
         var inputRate: Double // USD per million prompt tokens
         var outputRate: Double // USD per million completion tokens
+        /// Share of the model's tokens spent on prompts; the rest are completions.
+        /// Varying it per model keeps the efficiency readings from looking uniform.
+        var promptShare: Double
+        /// Average prompt plus completion size of one request.
+        var tokensPerRequest: Int
     }
 
     static let models: [SyntheticModel] = [
-        .init(slug: "anthropic/claude-sonnet-4.5", provider: "Anthropic", weight: 0.34, inputRate: 3.0, outputRate: 15.0),
-        .init(slug: "openai/gpt-5.1", provider: "OpenAI", weight: 0.24, inputRate: 1.25, outputRate: 10.0),
-        .init(slug: "google/gemini-2.5-pro", provider: "Google", weight: 0.16, inputRate: 1.25, outputRate: 10.0),
-        .init(slug: "deepseek/deepseek-v3.2", provider: "DeepSeek", weight: 0.12, inputRate: 0.28, outputRate: 0.42),
-        .init(slug: "meta-llama/llama-4-maverick", provider: "Meta", weight: 0.08, inputRate: 0.27, outputRate: 0.85),
-        .init(slug: "mistralai/mistral-large-2411", provider: "Mistral", weight: 0.04, inputRate: 2.0, outputRate: 6.0),
-        .init(slug: "qwen/qwen3-coder", provider: "Qwen", weight: 0.02, inputRate: 0.3, outputRate: 1.2),
+        .init(
+            slug: "anthropic/claude-sonnet-4.5",
+            provider: "Anthropic",
+            weight: 0.34,
+            inputRate: 3.0,
+            outputRate: 15.0,
+            promptShare: 0.86,
+            tokensPerRequest: 4_200
+        ),
+        .init(
+            slug: "openai/gpt-5.1",
+            provider: "OpenAI",
+            weight: 0.24,
+            inputRate: 1.25,
+            outputRate: 10.0,
+            promptShare: 0.82,
+            tokensPerRequest: 3_100
+        ),
+        .init(
+            slug: "google/gemini-2.5-pro",
+            provider: "Google",
+            weight: 0.16,
+            inputRate: 1.25,
+            outputRate: 10.0,
+            promptShare: 0.88,
+            tokensPerRequest: 6_800
+        ),
+        .init(
+            slug: "deepseek/deepseek-v3.2",
+            provider: "DeepSeek",
+            weight: 0.12,
+            inputRate: 0.28,
+            outputRate: 0.42,
+            promptShare: 0.74,
+            tokensPerRequest: 2_400
+        ),
+        .init(
+            slug: "meta-llama/llama-4-maverick",
+            provider: "Meta",
+            weight: 0.08,
+            inputRate: 0.27,
+            outputRate: 0.85,
+            promptShare: 0.80,
+            tokensPerRequest: 1_800
+        ),
+        .init(
+            slug: "mistralai/mistral-large-2411",
+            provider: "Mistral",
+            weight: 0.04,
+            inputRate: 2.0,
+            outputRate: 6.0,
+            promptShare: 0.62,
+            tokensPerRequest: 1_500
+        ),
+        .init(
+            slug: "qwen/qwen3-coder",
+            provider: "Qwen",
+            weight: 0.02,
+            inputRate: 0.3,
+            outputRate: 1.2,
+            promptShare: 0.90,
+            tokensPerRequest: 9_000
+        ),
     ]
 
     /// Rough dollars per hour of total synthetic activity.
@@ -100,12 +161,14 @@ public struct DemoProvider: SpendProvider {
                 let noise = Self.noise(seed: "\(model.slug)@\(Int(start.timeIntervalSince1970))")
                 let amount = bucketBudget * model.weight * noise
                 guard amount > 0.000_01 else { continue }
-                // Assume a 3:1 prompt:completion token split and price the tokens
-                // at the model's own rates, so tokens and dollars agree.
-                let blendedRate = (0.75 * model.inputRate) + (0.25 * model.outputRate)
-                let totalTokens = blendedRate > 0 ? Int(amount * 1_000_000 / blendedRate) : 0
-                let promptTokens = totalTokens * 3 / 4
-                let completionTokens = totalTokens / 4
+                // Price the tokens at the model's own rates and per-model prompt
+                // mix, so tokens and dollars agree and the efficiency readings
+                // have something realistic to show.
+                let unitRate = (model.promptShare * model.inputRate) + ((1 - model.promptShare) * model.outputRate)
+                let totalTokens = unitRate > 0 ? Int(amount * 1_000_000 / unitRate) : 0
+                let promptTokens = Int(Double(totalTokens) * model.promptShare)
+                let completionTokens = totalTokens - promptTokens
+                let requests = max(1, totalTokens / max(1, model.tokensPerRequest))
                 slices.append(
                     SpendSlice(
                         start: start,
@@ -117,7 +180,7 @@ public struct DemoProvider: SpendProvider {
                         amount: Decimal(string: String(format: "%.6f", amount)) ?? 0,
                         promptTokens: promptTokens,
                         completionTokens: completionTokens,
-                        requests: max(1, Int(amount / 0.02))
+                        requests: requests
                     )
                 )
             }

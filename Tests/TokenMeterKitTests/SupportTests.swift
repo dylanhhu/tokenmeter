@@ -90,11 +90,26 @@ struct SupportTests {
         #expect(FlexibleJSON.bool("true") == true)
     }
 
+    @Test("Blended per-million rates stay legible at both extremes")
+    func rateFormatting() throws {
+        #expect(try Money.perMillion(#require(Decimal(string: "3.412"))) == "$3.41/M")
+        #expect(try Money.perMillion(#require(Decimal(string: "0.0032"))).hasSuffix("0032/M"))
+        #expect(Money.perMillion(0) == "$0.00/M")
+    }
+
+    @Test("Shares render as percentages and nil is never zero")
+    func percentFormatting() {
+        #expect(Money.percent(0.25) == "25.0%")
+        #expect(Money.percent(nil) == "—")
+        #expect(Money.percent(0.0004) == "<0.1%")
+    }
+
     @Test("Settings round-trip and tolerate missing keys")
     func settingsCoding() throws {
         let settings = AppSettings(
             menuBarWindow: .monthly,
             grouping: .provider,
+            breakdownMeasure: .tokens,
             refreshInterval: 900,
             timeZoneMode: .utc,
             seriesLimit: 8,
@@ -114,6 +129,7 @@ struct SupportTests {
         let partialDecoded = try JSONDecoder().decode(AppSettings.self, from: partial)
         #expect(partialDecoded.menuBarWindow == .weekly)
         #expect(partialDecoded.refreshInterval == AppSettings.default.refreshInterval)
+        #expect(partialDecoded.breakdownMeasure == .spend)
     }
 
     @Test("Refetch and rebuild decisions are distinct")
@@ -127,6 +143,13 @@ struct SupportTests {
         var window = base
         window.menuBarWindow = .monthly
         #expect(window.requiresRefetch(comparedTo: base))
+
+        // Switching the measure only changes how cached data is ranked, so it
+        // must not trigger a provider round trip.
+        var measure = base
+        measure.breakdownMeasure = .tokens
+        #expect(measure.requiresRefetch(comparedTo: base) == false)
+        #expect(measure.requiresRebuild(comparedTo: base) == false)
     }
 
     @Test("Secrets are redacted, never echoed")

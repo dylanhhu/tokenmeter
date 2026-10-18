@@ -2,7 +2,8 @@
 
 A macOS menu bar app that shows what your LLM API usage costs — the current hour,
 day, week, or month — and breaks it down by model and provider when the API
-exposes that.
+exposes that. The same breakdown can be measured in tokens or requests, so spend
+and volume can be compared directly.
 
 Built for OpenRouter today, with a provider interface designed so switching or
 adding a vendor is a self-contained change.
@@ -73,6 +74,16 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
   day-level rows and can shift by a few hours at a boundary.
 - **Amounts are USD**, summed as `Decimal` rather than `Double` so thousands of
   sub-cent charges do not drift.
+- **The breakdown can be measured by spend, tokens, or requests.** Tokens and
+  requests are ordered by that period's volume, and each row also states the
+  share of the bill it accounts for. A model taking 47% of the tokens for 14% of
+  the spend is doing most of the work; one taking 6% of the tokens for 26% is
+  doing the expensive part. The measure is remembered between launches.
+- **Efficiency** covers the whole displayed window rather than the in-progress
+  period: blended cost per million tokens, completion-to-prompt ratio, tokens and
+  cost per request, and the model paying the highest effective rate. A blended
+  rate mixes input and output pricing, so the output ratio is shown beside it —
+  neither number is meant to stand alone.
 
 ## Privacy
 

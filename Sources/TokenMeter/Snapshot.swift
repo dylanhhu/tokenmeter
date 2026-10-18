@@ -18,14 +18,17 @@ enum Snapshot {
         guard let flagIndex = arguments.firstIndex(of: "--snapshot"),
               arguments.count > flagIndex + 1 else { return false }
         let path = arguments[flagIndex + 1]
-        let appearanceName = value(for: "--appearance", in: arguments) ?? "dark"
-        let view = value(for: "--view", in: arguments) ?? "popover"
-        let window = value(for: "--window", in: arguments) ?? "daily"
-        let width = value(for: "--width", in: arguments).flatMap(Double.init) ?? 372
+        let options = Options(
+            view: value(for: "--view", in: arguments) ?? "popover",
+            window: value(for: "--window", in: arguments) ?? "daily",
+            measure: value(for: "--measure", in: arguments) ?? "spend",
+            appearance: value(for: "--appearance", in: arguments) ?? "dark",
+            width: value(for: "--width", in: arguments).flatMap(Double.init) ?? 372
+        )
 
         Task { @MainActor in
             do {
-                try await render(to: path, view: view, window: window, appearance: appearanceName, width: width)
+                try await render(to: path, options: options)
                 FileHandle.standardOutput.write(Data("Wrote snapshot to \(path)\n".utf8))
                 NSApp.terminate(nil)
             } catch {
@@ -36,42 +39,47 @@ enum Snapshot {
         return true
     }
 
+    /// Snapshot flags, bundled so the renderer does not grow an unreadable
+    /// parameter list as new views and options are added.
+    private struct Options {
+        var view: String
+        var window: String
+        var measure: String
+        var appearance: String
+        var width: Double
+    }
+
     @MainActor
-    private static func render(
-        to path: String,
-        view: String,
-        window: String,
-        appearance: String,
-        width: Double
-    ) async throws {
+    private static func render(to path: String, options: Options) async throws {
         // Isolated store: nothing is written to the real settings file.
         let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = SettingsStore(fileURL: temporaryDirectory.appendingPathComponent("snapshot.json"))
         let model = AppModel(settingsStore: store, credentialStore: CredentialStore(service: "com.dylanhu.TokenMeter.snapshot"))
         model.updateSettings { settings in
             // `--view empty` renders the onboarding state instead.
-            settings.enabledProviders = view == "empty" ? [] : [DemoProvider.providerID]
-            settings.menuBarWindow = SpendWindow(rawValue: window) ?? .daily
+            settings.enabledProviders = options.view == "empty" ? [] : [DemoProvider.providerID]
+            settings.menuBarWindow = SpendWindow(rawValue: options.window) ?? .daily
+            settings.breakdownMeasure = BreakdownMeasure(rawValue: options.measure) ?? .spend
         }
-        if view != "empty" {
+        if options.view != "empty" {
             await model.refreshForSnapshot()
         }
 
         // The real popover draws on a window material; offscreen there is no
         // backdrop, so paint one or dark-appearance text is white on nothing.
-        let content = if view == "settings" {
+        let content = if options.view == "settings" {
             AnyView(SettingsView(model: model))
         } else {
             AnyView(SpendPopoverView(model: model))
         }
-        let effectiveWidth = view == "settings" ? max(width, 560) : width
+        let effectiveWidth = options.view == "settings" ? max(options.width, 560) : options.width
         let root = ZStack {
             Color(nsColor: .windowBackgroundColor)
             content
         }
         .frame(width: effectiveWidth)
         let hosting = NSHostingView(rootView: root)
-        let appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
+        let appearance = NSAppearance(named: options.appearance == "light" ? .aqua : .darkAqua)
         hosting.appearance = appearance
         hosting.layoutSubtreeIfNeeded()
 

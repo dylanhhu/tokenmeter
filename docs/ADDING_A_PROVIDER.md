@@ -129,6 +129,11 @@ public static func makeProvider(id: ProviderID, credential: String?) -> (any Spe
   reports an authoritative current-period figure that cannot be reconstructed
   (as with OpenRouter inference keys).
 - **Amounts are `Decimal` USD.** Convert elsewhere, not here.
+- **Populate token and request counts when the vendor reports them.** They power
+  the token and request measures and every efficiency figure. Leave them at zero
+  when the vendor does not report them; the UI hides the measures and the
+  efficiency block rather than estimating. Do not approximate one from the other:
+  a made-up token count becomes a made-up rate.
 
 ## Handle these API shapes defensively
 

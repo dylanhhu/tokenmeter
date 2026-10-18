@@ -14,7 +14,7 @@ Providers are pluggable adapters; OpenRouter is the reference implementation.
 
 ```bash
 make build      # debug build
-make test       # swift-testing suite (50 tests, no network)
+make test       # swift-testing suite (72 tests, no network)
 make lint       # swiftformat --lint + swiftlint --strict (no writes)
 make format     # apply formatting fixes
 make check      # lint + test — run before every commit
@@ -33,6 +33,7 @@ Use it to check a layout change before handing work back. Flags:
 ```bash
 ./.build/debug/TokenMeter --snapshot out.png --appearance light   # or dark
 ./.build/debug/TokenMeter --snapshot out.png --view settings      # popover | settings | empty
+./.build/debug/TokenMeter --snapshot out.png --measure tokens     # spend | tokens | requests
 ```
 
 ### Toolchain gotcha (read this first)
@@ -62,6 +63,9 @@ Sources/TokenMeterKit/          # pure logic, unit-tested, no AppKit UI
   Core/SpendWindow.swift        # windows, bucketing, time-zone handling
   Core/SpendSlice.swift         # the provider → aggregator contract
   Core/Aggregation.swift        # slices → SpendReport (series, totals, deltas)
+  Core/BreakdownRows.swift      # rows ranked by spend, tokens, or requests
+  Core/BreakdownMeasure.swift   # which quantity the breakdown is measured by
+  Core/TokenEfficiency.swift    # blended rates, output ratio, per-request costs
   Core/Money.swift              # Decimal money formatting
   Providers/SpendProvider.swift # the protocol every adapter implements
   Providers/ProviderCatalog.swift # registry — the one place adapters are listed
@@ -114,6 +118,11 @@ Break one of these and you have introduced a bug, even if it compiles.
 9. **`AppModel` is `@MainActor` and owns all mutable app state.** Network work
    runs in detached tasks and returns `Sendable` values. Do not add mutable shared
    state to `TokenMeterKit` types without making it an `actor`.
+10. **Every measure shares the headline's denominator.** Switching the breakdown
+    to tokens or requests re-ranks the same rows against that period's tokens or
+    requests, never the window's. `BreakdownRow` carries all three shares for the
+    same period so the divergence stays visible. Efficiency figures are the one
+    exception: they cover the whole window and say so in their caption.
 
 ## Adding a provider
 

@@ -27,29 +27,26 @@ public struct SpendReport: Sendable {
         /// the hourly window, whose headline is a trailing 60 minutes rather
         /// than the current clock-hour bucket.
         public var currentAmount: Decimal
+        /// Token and request totals across the whole displayed window.
+        public var promptTokens = 0
+        public var completionTokens = 0
+        public var requests = 0
+        /// Tokens and requests inside `headlineRange`, aligned with
+        /// `currentAmount`. The hourly headline can span two clock-hour buckets,
+        /// so these cannot be read from a per-bucket array.
+        public var currentPromptTokens = 0
+        public var currentCompletionTokens = 0
+        public var currentRequests = 0
         public var isOther: Bool
         /// Number of underlying series folded into an "Other" row.
         public var foldedCount: Int
 
+        public var totalTokens: Int {
+            promptTokens + completionTokens
+        }
+
         public var share: Decimal {
             amounts.reduce(0, +)
-        }
-    }
-
-    /// One row in the ranked breakdown, with the amount that the displayed
-    /// denominator refers to.
-    public struct BreakdownRow: Sendable, Identifiable, Hashable {
-        public var series: Series
-        /// Amount for this row: the current period, or the whole window.
-        public var amount: Decimal
-        /// Share of the denominator, 0...1. Nil when the denominator is zero.
-        public var share: Double?
-        /// Position in the window-wide ranking, so a row keeps the same colour as
-        /// its stack segment even when the list is sorted by period instead.
-        public var colorIndex: Int
-
-        public var id: String {
-            series.id
         }
     }
 
@@ -121,45 +118,6 @@ public struct SpendReport: Sendable {
     /// denominator as the headline.
     public var currentTokens: Int {
         currentPromptTokens + currentCompletionTokens
-    }
-
-    /// Rows for the in-progress period.
-    public var currentBreakdown: [BreakdownRow] {
-        let denominator = currentPeriodTotal
-        let rows = orderedSeries.enumerated().map { index, series -> BreakdownRow in
-            let amount = series.currentAmount
-            return BreakdownRow(
-                series: series,
-                amount: amount,
-                share: denominator > 0 ? (amount / denominator).doubleValue : nil,
-                colorIndex: index
-            )
-        }
-        // Ranked by the period being explained, not by the window, with "Other"
-        // pinned last.
-        return rows.sorted { lhs, rhs in
-            if lhs.series.isOther != rhs.series.isOther {
-                return !lhs.series.isOther
-            }
-            if lhs.amount == rhs.amount {
-                return lhs.series.label < rhs.series.label
-            }
-            return lhs.amount > rhs.amount
-        }
-    }
-
-    /// Rows summed across every displayed bucket, for "where did the last N
-    /// buckets go" reading.
-    public var windowBreakdown: [BreakdownRow] {
-        let denominator = grandTotal
-        return orderedSeries.enumerated().map { index, series in
-            BreakdownRow(
-                series: series,
-                amount: series.total,
-                share: denominator > 0 ? (series.total / denominator).doubleValue : nil,
-                colorIndex: index
-            )
-        }
     }
 
     /// Caption for the denominator behind `currentBreakdown`.
@@ -366,7 +324,6 @@ public enum SpendAggregator {
             detail: seriesDetail(for: slice, grouping: grouping),
             bucketCount: fold.bucketTotals.count
         )
-
         if let index {
             fold.bucketTotals[index] += slice.amount
             fold.promptTokens += slice.promptTokens
@@ -374,6 +331,9 @@ public enum SpendAggregator {
             fold.requests += slice.requests
             entry.amounts[index] += slice.amount
             entry.total += slice.amount
+            entry.promptTokens += slice.promptTokens
+            entry.completionTokens += slice.completionTokens
+            entry.requests += slice.requests
         }
 
         if inHeadline {
@@ -382,6 +342,9 @@ public enum SpendAggregator {
             fold.headlineCompletionTokens += slice.completionTokens
             fold.headlineRequests += slice.requests
             entry.currentAmount += slice.amount
+            entry.currentPromptTokens += slice.promptTokens
+            entry.currentCompletionTokens += slice.completionTokens
+            entry.currentRequests += slice.requests
         }
 
         fold.accumulator[key] = entry
@@ -417,6 +380,12 @@ public enum SpendAggregator {
         for entry in overflow {
             other.total += entry.total
             other.currentAmount += entry.currentAmount
+            other.promptTokens += entry.promptTokens
+            other.completionTokens += entry.completionTokens
+            other.requests += entry.requests
+            other.currentPromptTokens += entry.currentPromptTokens
+            other.currentCompletionTokens += entry.currentCompletionTokens
+            other.currentRequests += entry.currentRequests
             for (index, amount) in entry.amounts.enumerated() {
                 other.amounts[index] += amount
             }
@@ -432,6 +401,12 @@ public enum SpendAggregator {
         var amounts: [Decimal]
         var total: Decimal = 0
         var currentAmount: Decimal = 0
+        var promptTokens = 0
+        var completionTokens = 0
+        var requests = 0
+        var currentPromptTokens = 0
+        var currentCompletionTokens = 0
+        var currentRequests = 0
 
         init(key: String, label: String, detail: String?, bucketCount: Int) {
             self.key = key
@@ -448,6 +423,12 @@ public enum SpendAggregator {
                 total: total,
                 amounts: amounts,
                 currentAmount: currentAmount,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                requests: requests,
+                currentPromptTokens: currentPromptTokens,
+                currentCompletionTokens: currentCompletionTokens,
+                currentRequests: currentRequests,
                 isOther: isOther,
                 foldedCount: foldedCount
             )

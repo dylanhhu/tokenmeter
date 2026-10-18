@@ -43,6 +43,11 @@ struct SettingsView: View {
                         Text(grouping.title).tag(grouping)
                     }
                 }
+                Picker("Breakdown measured by", selection: measureBinding) {
+                    ForEach(BreakdownMeasure.allCases) { measure in
+                        Text(measure.title).tag(measure)
+                    }
+                }
                 Picker("Series shown", selection: seriesLimitBinding) {
                     ForEach([4, 5, 6, 8, 10, 12], id: \.self) { limit in
                         Text("\(limit)").tag(limit)
@@ -132,6 +137,13 @@ struct SettingsView: View {
         Binding(
             get: { model.settings.grouping },
             set: { value in model.updateSettings { $0.grouping = value } }
+        )
+    }
+
+    private var measureBinding: Binding<BreakdownMeasure> {
+        Binding(
+            get: { model.settings.breakdownMeasure },
+            set: { value in model.updateSettings { $0.breakdownMeasure = value } }
         )
     }
 

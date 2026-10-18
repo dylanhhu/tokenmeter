@@ -27,6 +27,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
     /// buckets the chart displays.
     public var menuBarWindow: SpendWindow
     public var grouping: SpendGrouping
+    /// Quantity the breakdown list ranks and measures by. Persisted so a user who
+    /// prefers thinking in tokens keeps that lens across launches.
+    public var breakdownMeasure: BreakdownMeasure
     /// How often to refresh from providers, in seconds.
     public var refreshInterval: TimeInterval
     public var timeZoneMode: TimeZoneMode
@@ -41,6 +44,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public init(
         menuBarWindow: SpendWindow = .daily,
         grouping: SpendGrouping = .model,
+        breakdownMeasure: BreakdownMeasure = .spend,
         refreshInterval: TimeInterval = 300,
         timeZoneMode: TimeZoneMode = .local,
         seriesLimit: Int = 5,
@@ -50,6 +54,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     ) {
         self.menuBarWindow = menuBarWindow
         self.grouping = grouping
+        self.breakdownMeasure = breakdownMeasure
         self.refreshInterval = refreshInterval
         self.timeZoneMode = timeZoneMode
         self.seriesLimit = seriesLimit
@@ -67,6 +72,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         menuBarWindow = try container.decodeIfPresent(SpendWindow.self, forKey: .menuBarWindow) ?? fallback.menuBarWindow
         grouping = try container.decodeIfPresent(SpendGrouping.self, forKey: .grouping) ?? fallback.grouping
+        breakdownMeasure = try container.decodeIfPresent(BreakdownMeasure.self, forKey: .breakdownMeasure) ?? fallback.breakdownMeasure
         refreshInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? fallback.refreshInterval
         timeZoneMode = try container.decodeIfPresent(TimeZoneMode.self, forKey: .timeZoneMode) ?? fallback.timeZoneMode
         seriesLimit = try container.decodeIfPresent(Int.self, forKey: .seriesLimit) ?? fallback.seriesLimit

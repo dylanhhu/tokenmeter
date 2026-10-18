@@ -1,7 +1,8 @@
 import SwiftUI
 import TokenMeterKit
 
-/// Legend and ranking for the chart: one row per series, with amount and share.
+/// Legend and ranking for the chart: one row per series, measured by whichever
+/// quantity the user selected.
 struct BreakdownList: View {
     let rows: [SpendReport.BreakdownRow]
 
@@ -45,14 +46,41 @@ struct BreakdownList: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(Money.precise(row.amount))
+                Text(row.valueLabel)
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                Text(row.share.map { String(format: "%.1f%%", $0 * 100) } ?? "—")
-                    .font(.system(size: 9).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    Text(row.shareLabel)
+                    if let cross = row.crossShareLabel {
+                        Text("·").foregroundStyle(.quaternary)
+                        Text(cross)
+                    }
+                }
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
             }
         }
-        .help(series.detail ?? series.label)
+        .help(helpText(for: row))
         .accessibilityElement(children: .combine)
+    }
+
+    /// The tooltip has room for the readings the row itself cannot fit: spend,
+    /// tokens, and requests for the same period, regardless of the active
+    /// measure.
+    private func helpText(for row: SpendReport.BreakdownRow) -> String {
+        var parts = ["\(row.series.label): \(Money.precise(row.amount))"]
+        if row.tokens > 0 {
+            parts.append("\(row.tokens.groupedString) tokens")
+        }
+        if row.requests > 0 {
+            parts.append("\(row.requests.groupedString) requests")
+        }
+        if let rate = row.costPerMillionTokens {
+            parts.append("\(Money.perMillion(rate)) blended")
+        }
+        if let detail = row.series.detail {
+            parts.append(detail)
+        }
+        return parts.joined(separator: " · ")
     }
 }
