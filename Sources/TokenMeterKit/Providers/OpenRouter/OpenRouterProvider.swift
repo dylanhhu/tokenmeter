@@ -38,6 +38,18 @@ public struct OpenRouterProvider: SpendProvider {
     /// rows; if a response still comes back flagged truncated we retry coarser.
     static let rowLimit = 10_000
 
+    /// Longest time range the analytics endpoint accepts in one request.
+    ///
+    /// The server resolves a per-query cap from the requested metrics and
+    /// dimensions. `hour` granularity reads the minute rollup, and
+    /// generations-only dimensions such as `provider` never use the daily
+    /// rollup, so both are capped at 31 days; going over is a hard 400
+    /// ("time_range exceeds maximum of 31 days for the requested
+    /// metrics/dimensions"). Weekly and monthly windows span months once the
+    /// prior comparison period is included, so the range is issued as several
+    /// segments instead of one request.
+    static let maxDaysPerQuery = 30
+
     private let apiKey: String
     private let client: OpenRouterClient
 
@@ -103,35 +115,28 @@ public struct OpenRouterProvider: SpendProvider {
             extraMetrics.append(metric)
         }
 
+        let segments = Self.querySegments(for: request.range)
         var warnings: [String] = []
-        var rows: [[String: Any]]
         var usedGranularity = granularity
-        var truncated: Bool
 
-        (rows, truncated) = try await client.query(
-            OpenRouterClient.Query(
-                spendMetric: schema.spendMetric,
-                extraMetrics: extraMetrics,
-                dimensions: dimensions,
-                granularity: granularity,
-                range: request.range,
-                limit: Self.rowLimit
-            )
+        var (rows, truncated) = try await self.rows(
+            segments: segments,
+            granularity: granularity,
+            spendMetric: schema.spendMetric,
+            extraMetrics: extraMetrics,
+            dimensions: dimensions
         )
 
         // A truncated result loses whole time buckets, so prefer a coarser
         // granularity over silently under-reporting.
-        if truncated, granularity == "hour", request.window != .hourly {
+        if truncated, granularity == "hour", request.window != .hourly, schema.granularities.contains("day") {
             usedGranularity = "day"
-            (rows, truncated) = try await client.query(
-                OpenRouterClient.Query(
-                    spendMetric: schema.spendMetric,
-                    extraMetrics: extraMetrics,
-                    dimensions: dimensions,
-                    granularity: usedGranularity,
-                    range: request.range,
-                    limit: Self.rowLimit
-                )
+            (rows, truncated) = try await self.rows(
+                segments: segments,
+                granularity: usedGranularity,
+                spendMetric: schema.spendMetric,
+                extraMetrics: extraMetrics,
+                dimensions: dimensions
             )
             warnings.append("Hourly detail exceeded the API row limit; showing daily resolution.")
         }
@@ -139,14 +144,26 @@ public struct OpenRouterProvider: SpendProvider {
             warnings.append("Results were truncated by the API; totals may be incomplete.")
         }
 
-        let slices = Self.slices(
-            from: rows,
-            granularity: usedGranularity,
-            dimensions: dimensions,
-            schema: schema
+        Log.providers.debug(
+            "openrouter analytics rows=\(rows.count, privacy: .public) granularity=\(usedGranularity, privacy: .public)"
         )
-        if slices.isEmpty {
-            warnings.append("No activity returned for the selected range.")
+
+        let slices = Self.merged(
+            Self.slices(
+                from: rows,
+                granularity: usedGranularity,
+                dimensions: dimensions,
+                schema: schema
+            )
+        )
+        if let warning = Self.rowReconciliationWarning(rowCount: rows.count, sliceCount: slices.count) {
+            warnings.append(warning)
+            let columns = rows.first.map { $0.keys.sorted().joined(separator: ",") } ?? "-"
+            let sample = rows.first.flatMap(FlexibleJSON.timeBucket).map { bucket in
+                bucket.value.map { "\(bucket.key)=\($0) [\(type(of: $0))]" } ?? "\(bucket.key)=nil"
+            } ?? "no time column"
+            Log.providers.notice("openrouter: \(warning, privacy: .public) columns=\(columns, privacy: .public)")
+            Log.providers.notice("openrouter: time bucket sample \(sample, privacy: .public)")
         }
 
         var capabilities = Self.managementCapabilities(for: schema)
@@ -158,6 +175,96 @@ public struct OpenRouterProvider: SpendProvider {
             periodTotals: [:],
             warnings: warnings
         )
+    }
+
+    /// Runs one query per segment and concatenates the rows.
+    ///
+    /// Segments are contiguous and half-open, so a bucket belongs to exactly one
+    /// request; `merged(_:)` still folds any row the server reports twice, e.g.
+    /// when a day bucket straddles a segment boundary.
+    private func rows(
+        segments: [DateInterval],
+        granularity: String,
+        spendMetric: String,
+        extraMetrics: [String],
+        dimensions: [String]
+    ) async throws -> (rows: [[String: Any]], truncated: Bool) {
+        var rows: [[String: Any]] = []
+        var truncated = false
+        for segment in segments {
+            let page = try await client.query(
+                OpenRouterClient.Query(
+                    spendMetric: spendMetric,
+                    extraMetrics: extraMetrics,
+                    dimensions: dimensions,
+                    granularity: granularity,
+                    range: segment,
+                    limit: Self.rowLimit
+                )
+            )
+            rows.append(contentsOf: page.rows)
+            truncated = truncated || page.truncated
+        }
+        return (rows, truncated)
+    }
+
+    /// Splits a fetch range into segments the endpoint will accept.
+    ///
+    /// Cuts land on UTC midnights so a day-granularity bucket is rarely split
+    /// across two requests, which keeps per-segment rows complete.
+    static func querySegments(for range: DateInterval, maxDays: Int = maxDaysPerQuery) -> [DateInterval] {
+        let maxDuration = TimeInterval(max(maxDays, 1)) * 86_400
+        guard range.duration > maxDuration else { return [range] }
+
+        var segments: [DateInterval] = []
+        var cursor = range.start
+        while range.end.timeIntervalSince(cursor) > maxDuration {
+            let naive = cursor.addingTimeInterval(maxDuration)
+            let midnight = Date(timeIntervalSince1970: (naive.timeIntervalSince1970 / 86_400).rounded(.down) * 86_400)
+            let cut = midnight > cursor ? midnight : naive
+            segments.append(DateInterval(start: cursor, end: cut))
+            cursor = cut
+        }
+        segments.append(DateInterval(start: cursor, end: range.end))
+        return segments
+    }
+
+    /// Folds slices that describe the same (bucket, model, upstream provider)
+    /// triple, which happens only when a bucket spans a segment boundary.
+    static func merged(_ slices: [SpendSlice]) -> [SpendSlice] {
+        var merged: [SliceKey: SpendSlice] = [:]
+        for slice in slices {
+            let key = SliceKey(start: slice.start, model: slice.model, upstreamProvider: slice.upstreamProvider)
+            guard var existing = merged[key] else {
+                merged[key] = slice
+                continue
+            }
+            existing.amount += slice.amount
+            existing.promptTokens += slice.promptTokens
+            existing.completionTokens += slice.completionTokens
+            existing.requests += slice.requests
+            merged[key] = existing
+        }
+        return merged.values.sorted { $0.start < $1.start }
+    }
+
+    private struct SliceKey: Hashable {
+        var start: Date
+        var model: String?
+        var upstreamProvider: String?
+    }
+
+    /// Explains an empty chart instead of reporting a clean zero.
+    ///
+    /// A silent gap between "the API returned rows" and "the app has spend" is
+    /// indistinguishable from a genuinely quiet account, which is how a parsing
+    /// regression goes unnoticed.
+    static func rowReconciliationWarning(rowCount: Int, sliceCount: Int) -> String? {
+        guard sliceCount == 0 else { return nil }
+        if rowCount == 0 {
+            return "No activity returned for the selected range."
+        }
+        return "OpenRouter returned \(rowCount) rows but none carried a readable time bucket."
     }
 
     /// Maps analytics rows to slices. Rows look like:

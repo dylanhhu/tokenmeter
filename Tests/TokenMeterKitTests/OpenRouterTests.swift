@@ -210,6 +210,86 @@ struct OpenRouterTests {
         #expect(OpenRouterProvider.rowLimit > 0)
     }
 
+    @Test("Long windows are split into segments the endpoint will accept")
+    func longRangesAreSegmented() {
+        // The API rejects a `time_range` wider than 31 days for hour granularity
+        // and for generations-only dimensions such as `provider`, which every
+        // management-key query asks for. Weekly and monthly windows exceed that
+        // as soon as the prior comparison period is included.
+        let limit = TimeInterval(OpenRouterProvider.maxDaysPerQuery) * 86_400
+        #expect(limit < 31 * 86_400)
+
+        for window in SpendWindow.allCases {
+            let bucketing = Bucketing(window: window, timeZoneMode: .local, now: Date())
+            let range = bucketing.fetchRange
+            let segments = OpenRouterProvider.querySegments(for: range)
+
+            #expect(segments.isEmpty == false)
+            #expect(segments.first?.start == range.start)
+            #expect(segments.last?.end == range.end)
+            for (index, segment) in segments.enumerated() {
+                #expect(segment.duration > 0)
+                #expect(segment.duration <= limit)
+                if index > 0 {
+                    #expect(segment.start == segments[index - 1].end)
+                }
+            }
+        }
+    }
+
+    @Test("Daily-range fetches still fit in a single request")
+    func dailyWindowIsOneRequest() {
+        let bucketing = Bucketing(window: .daily, timeZoneMode: .local, now: Date())
+        #expect(OpenRouterProvider.querySegments(for: bucketing.fetchRange).count == 1)
+    }
+
+    @Test("Segments cut on UTC midnights so day buckets are not split")
+    func segmentCutsLandOnUTCMidnight() {
+        let start = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01T00:00:00Z
+        let range = DateInterval(start: start.addingTimeInterval(3_600), duration: 100 * 86_400)
+        let segments = OpenRouterProvider.querySegments(for: range)
+        for segment in segments.dropLast() {
+            #expect(segment.end.timeIntervalSince1970.truncatingRemainder(dividingBy: 86_400) == 0)
+        }
+    }
+
+    @Test("A bucket reported twice is folded into one slice")
+    func duplicateSlicesAreMerged() throws {
+        let quarter = try #require(Decimal(string: "0.25"))
+        let threeQuarters = try #require(Decimal(string: "0.75"))
+        let start = Date(timeIntervalSince1970: 1_767_225_600)
+        let first = SpendSlice(
+            start: start,
+            end: start.addingTimeInterval(86_400),
+            providerID: OpenRouterProvider.providerID,
+            providerName: "OpenRouter",
+            model: "openai/gpt-5.1",
+            upstreamProvider: "OpenAI",
+            amount: quarter,
+            promptTokens: 10,
+            completionTokens: 5,
+            requests: 2
+        )
+        var second = first
+        second.amount = threeQuarters
+        second.promptTokens = 1
+
+        let merged = OpenRouterProvider.merged([first, second])
+        #expect(merged.count == 1)
+        #expect(merged[0].amount == 1)
+        #expect(merged[0].promptTokens == 11)
+        #expect(merged[0].requests == 4)
+    }
+
+    @Test("An empty chart explains itself instead of reporting a clean zero")
+    func reconciliationWarning() {
+        #expect(OpenRouterProvider.rowReconciliationWarning(rowCount: 0, sliceCount: 0)?.contains("No activity") == true)
+        #expect(
+            OpenRouterProvider.rowReconciliationWarning(rowCount: 12, sliceCount: 0)?.contains("12 rows") == true
+        )
+        #expect(OpenRouterProvider.rowReconciliationWarning(rowCount: 12, sliceCount: 3) == nil)
+    }
+
     @Test("Key info decodes OpenRouter's snake_case payload")
     func keyInfoDecoding() throws {
         let json = """
