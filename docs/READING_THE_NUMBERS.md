@@ -21,11 +21,15 @@ series you see in the chart.
 | Tokens | share of the period's tokens | prompt + completion tokens | who is doing the work |
 | Requests | share of the period's requests | request count | is the workflow churning |
 
-"Share of the period" means the **in-progress period** — the same denominator as
+"Share of the period" means the **headline period** — the same denominator as
 the headline figure. A row reading `34.2% of tokens` under `$9.50 today` is
 34.2% of *today's* tokens, not of the chart's 14 days. That is deliberate: a
 share computed over a different interval than the headline would invite
 comparing two numbers that describe different populations.
+
+The hourly window is the one case where the period and the last bar diverge: its
+headline is the trailing 60 minutes, which can span two clock-hour buckets.
+Token and request shares follow that rolling interval, not the last bar.
 
 Colours come from the window-wide spend ranking, not list position. A series
 keeps its chart colour when the list is re-sorted by tokens.

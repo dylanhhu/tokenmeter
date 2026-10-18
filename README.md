@@ -79,7 +79,7 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
   share of the bill it accounts for. A model taking 47% of the tokens for 14% of
   the spend is doing most of the work; one taking 6% of the tokens for 26% is
   doing the expensive part. The measure is remembered between launches.
-- **Efficiency** covers the whole displayed window rather than the in-progress
+- **Efficiency** covers the whole displayed window rather than the headline
   period: blended cost per million tokens, completion-to-prompt ratio, tokens and
   cost per request, and the model paying the highest effective rate. A blended
   rate mixes input and output pricing, so the output ratio is shown beside it —

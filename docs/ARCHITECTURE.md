@@ -114,11 +114,11 @@ displayed range maps to exactly one bucket.
   provider-reported period total (`periodTotals`) still takes precedence — an
   inference key knows today's exact spend even though it cannot show history.
 - **Delta** compares against `priorHeadlineRange`, the equal-length interval
-  immediately before the headline (`priorComparableTotal`). Comparing a partial day against a whole day
-  would manufacture a misleading number on every refresh.
-- **Counters** travel with the same folds: every series and bucket carries
-  prompt tokens, completion tokens, and requests alongside its `Decimal` amount,
-  so token volume is attributed exactly as finely as spend.
+  immediately before the headline (`priorComparableTotal`). Comparing a partial
+  day against a whole day would manufacture a misleading number on every refresh.
+- **Counters** travel with the same folds: every series carries prompt tokens,
+  completion tokens, and requests both across the window and inside the headline
+  interval, so token volume is attributed exactly as finely as spend.
 
 ## Token measures and efficiency
 
@@ -145,7 +145,7 @@ feature; a single percentage of either kind would hide it.
 completion-to-prompt ratio, tokens and cost per request, and an effective rate
 per series relative to the window's average.
 
-Efficiency deliberately covers the **whole window**, not the in-progress bucket.
+Efficiency deliberately covers the **whole window**, not the headline period.
 A partial hour rarely holds enough tokens for a blended rate or an output ratio
 to mean anything, and a figure that lurches on every refresh teaches nothing. The
 caption ("last 14 days") states the span so the block is never mistaken for the
