@@ -207,6 +207,9 @@ previously would have caught it is part of the fix.
 
 - Conventional-ish subjects: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`. One logical change per commit.
+- "Merge" means squash. Use `gh pr merge --squash`, or `git merge --squash`
+  followed by one commit. Do not create merge commits or fast-forward a branch's
+  intermediate commits onto `main`.
 - `make check` must pass before you push; CI runs the same commands.
 - A commit that adds behaviour includes the failing test written first in the
   same commit (or an earlier one), not a follow-up `test:` commit.
