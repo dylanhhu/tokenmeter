@@ -160,6 +160,9 @@ Two guards keep the derived figures honest:
   tokens against a dollar of spend implies a five-figure rate, which is rounding,
   not a price anyone paid.
 
+How to read the resulting figures, and where each one misleads, is in
+[docs/READING_THE_NUMBERS.md](READING_THE_NUMBERS.md).
+
 ## State and failure handling
 
 `AppModel` is a `@MainActor @Observable` singleton. It:

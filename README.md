@@ -85,6 +85,25 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
   rate mixes input and output pricing, so the output ratio is shown beside it —
   neither number is meant to stand alone.
 
+### Reading the new figures
+
+See [docs/READING_THE_NUMBERS.md](docs/READING_THE_NUMBERS.md) for the full
+guide, including the cases where each figure misleads. The short version:
+
+- **Read the share pair, not one number.** Spend share well above token share
+  means a model is priced above average, not that it is wasteful; the question
+  is whether its work could move down a tier.
+- **A blended rate moves with the output ratio.** It reflects what was billed,
+  caching included, so compare it across similar workloads or against its own
+  past.
+- **Output per input tells you which lever exists.** A low ratio means prompts
+  dominate the cost, so trimming or caching context helps; a high ratio means
+  output pricing dominates.
+- **Cost per request is the cross-model comparison**, since it already folds in
+  the prompt/answer mix a workload produces.
+- **Efficiency covers the whole window, the breakdown covers the current
+  period.** They are captioned accordingly.
+
 ## Privacy
 
 - API keys live in the login Keychain, never in a config file.

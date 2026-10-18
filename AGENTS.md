@@ -75,7 +75,7 @@ Sources/TokenMeterKit/          # pure logic, unit-tested, no AppKit UI
   Support/                      # logging, lenient JSON/date parsing, HTTP
 Sources/TokenMeter/             # app layer: MenuBarExtra, popover, settings UI
 Tests/TokenMeterKitTests/       # swift-testing; never hits the network
-docs/                           # architecture and provider-authoring guides
+docs/                           # architecture, metrics, and provider-authoring guides
 ```
 
 Dependency direction is strictly one-way: `TokenMeter` → `TokenMeterKit`.
