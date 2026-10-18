@@ -44,7 +44,7 @@ struct SpendPopoverView: View {
                         if !model.issues.isEmpty {
                             issueList
                         }
-                        SpendChart(report: report, bucketing: model.currentBucketing)
+                        SpendChart(report: report)
                         Divider().opacity(0.4)
                         breakdown(report)
                     }

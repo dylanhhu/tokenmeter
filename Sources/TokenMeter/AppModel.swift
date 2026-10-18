@@ -53,7 +53,6 @@ final class AppModel {
     /// Recently fetched provider results, so navigating the popover does not
     /// re-query every vendor. Filled and read by `ProviderFetch.fetchAll`.
     private let resultCache: SpendResultCache
-    private var reportBucketing: Bucketing
     private var refreshLoop: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
@@ -69,7 +68,6 @@ final class AppModel {
         let loaded = settingsStore.load()
         settings = loaded
         resultCache = SpendResultCache(ttl: Self.cacheLifetime(for: loaded))
-        reportBucketing = Bucketing(window: loaded.menuBarWindow, timeZoneMode: loaded.timeZoneMode)
         connectedProviders = ProviderFetch.syntheticProviders(in: loaded.enabledProviders)
     }
 
@@ -132,10 +130,6 @@ final class AppModel {
 
     // MARK: - Derived state
 
-    var bucketing: Bucketing {
-        Bucketing(window: settings.menuBarWindow, timeZoneMode: settings.timeZoneMode)
-    }
-
     /// Windows that at least one configured provider can fill.
     var availableWindows: [SpendWindow] {
         guard !settings.enabledProviders.isEmpty else { return SpendWindow.allCases }
@@ -162,7 +156,7 @@ final class AppModel {
         let amount = Money.menuBar(report.headlineTotal)
         switch settings.menuBarStyle {
         case .amount, .iconAndAmount: return amount
-        case .amountAndWindow: return "\(amount) \(settings.menuBarWindow.shortTitle)"
+        case .amountAndWindow: return "\(amount) \(report.window.shortTitle)"
         }
     }
 
@@ -337,7 +331,6 @@ final class AppModel {
         let timeZoneMode = settings.timeZoneMode
         let enabled = settings.enabledProviders
         let bucketing = Bucketing(window: window, timeZoneMode: timeZoneMode)
-        reportBucketing = bucketing
         let request = SpendRequest(bucketing: bucketing)
         let keychain = credentialStore
         let cached = credentialCache
@@ -356,7 +349,7 @@ final class AppModel {
                 bypassCache: bypassCache
             )
             guard !Task.isCancelled, let self else { return }
-            apply(results: results, credentials: credentials, enabled: enabled, bucketing: bucketing)
+            apply(results: results, credentials: credentials, enabled: enabled)
         }
     }
 
@@ -377,8 +370,7 @@ final class AppModel {
     private func apply(
         results: [ProviderFetch.Outcome],
         credentials: [ProviderID: String?],
-        enabled: [ProviderID],
-        bucketing: Bucketing
+        enabled: [ProviderID]
     ) {
         isRefreshing = false
         // Report the age of the data, not the age of this refresh: a cache hit
@@ -452,7 +444,6 @@ final class AppModel {
         let retained = contributions.filter { failedIDs.contains($0.providerID) }
         contributions = retained + newContributions
         issues = newIssues
-        reportBucketing = bucketing
 
         emptyStateMessage = contributions.isEmpty && newIssues.isEmpty
             ? "No providers are enabled."
@@ -464,7 +455,6 @@ final class AppModel {
 
     private func rebuildReport() {
         let bucketing = Bucketing(window: settings.menuBarWindow, timeZoneMode: settings.timeZoneMode)
-        reportBucketing = bucketing
         let enabled = Set(settings.enabledProviders)
         let included = contributions.filter { enabled.contains($0.providerID) }
         if included.isEmpty {
@@ -477,10 +467,5 @@ final class AppModel {
             grouping: settings.grouping,
             seriesLimit: settings.seriesLimit
         )
-    }
-
-    /// Bucketing the current report was built with, used by the views for labels.
-    var currentBucketing: Bucketing {
-        reportBucketing
     }
 }

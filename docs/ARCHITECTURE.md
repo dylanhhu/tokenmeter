@@ -171,6 +171,12 @@ How to read the resulting figures, and where each one misleads, is in
   one slow vendor cannot stall a refresh
 - retains the last good contribution for any provider that fails, and surfaces
   the failure as a `ProviderIssue` row instead of blanking the chart
+- keeps the previous report on screen while a refresh is in flight. A
+  report is self-describing — its `window` travels with it — so views
+  derive window-scoped configuration (axis scale, labels, the menu-bar
+  window suffix) from the report rather than from settings. Pairing a
+  stale report with the newly selected window's scale is what made the
+  chart jump mid-refresh.
 - refreshes on a timer, on wake, on wall-clock change, and when the popover opens
   (only if the data is stale)
 - serves the popover and window switching from `SpendResultCache`, which keeps one
