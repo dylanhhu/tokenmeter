@@ -108,6 +108,46 @@ struct OpenRouterTests {
         #expect(OpenRouterProvider.serverGranularity(for: request, schema: coarse) == "day")
     }
 
+    @Test("Minute rows map to one-minute slices")
+    func minuteRows() {
+        let rows: [[String: Any]] = [
+            [
+                "date__minute": "2026-02-11T04:31:00Z",
+                "model": "openai/gpt-5.1",
+                "total_usage": 0.02,
+            ],
+        ]
+        let slices = OpenRouterProvider.slices(from: rows, granularity: "minute", dimensions: ["model"], schema: Self.schema)
+        #expect(slices.count == 1)
+        #expect(slices[0].end.timeIntervalSince(slices[0].start) == 60)
+    }
+
+    @Test("Hourly requests refine the trailing window from an hour boundary")
+    func minuteRefinement() throws {
+        let calendar = Self.calendar()
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9, minute: 25)))
+        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: now)
+        let request = SpendRequest(bucketing: bucketing)
+
+        // The trailing window starts at 08:26 and its prior hour at 07:26, so the
+        // minute tail must begin at 07:00; the cut lands on a UTC hour so the
+        // coarse and fine queries cannot double-count a partial bucket.
+        let start = try #require(OpenRouterProvider.minuteRefinementStart(for: request, schema: Self.schema))
+        #expect(start == calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 7)))
+
+        let hourOnly = OpenRouterClient.Schema(
+            spendMetric: "total_usage",
+            tokenMetrics: .init(total: nil, prompt: nil, completion: nil),
+            requestMetric: nil,
+            dimensions: ["model"],
+            granularities: ["hour", "day"]
+        )
+        #expect(OpenRouterProvider.minuteRefinementStart(for: request, schema: hourOnly) == nil)
+        // Without minute rows the trailing figure cannot be resolved, so hourly
+        // must not be advertised.
+        #expect(!OpenRouterProvider.managementCapabilities(for: hourOnly).supports(.hourly))
+    }
+
     @Test("Dimensions prefer model then provider, capped at two")
     func dimensionSelection() {
         #expect(OpenRouterProvider.dimensions(for: Self.schema) == ["model", "provider"])

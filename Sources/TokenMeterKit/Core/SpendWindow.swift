@@ -33,13 +33,23 @@ public enum SpendWindow: String, CaseIterable, Codable, Sendable, Identifiable {
     }
 
     /// Describes the headline figure, e.g. "$1.24 **this week**".
+    ///
+    /// The hourly window reports the trailing 60 minutes rather than the clock
+    /// hour to date: at 9:05, "this hour" would be five minutes of spend, which
+    /// is not what anyone means by the last hour.
     public var headlineNoun: String {
         switch self {
-        case .hourly: "this hour"
+        case .hourly: "last hour"
         case .daily: "today"
         case .weekly: "this week"
         case .monthly: "this month"
         }
+    }
+
+    /// True when the headline covers a rolling interval ending at `now` instead
+    /// of the current calendar bucket.
+    public var headlinesTrailingPeriod: Bool {
+        self == .hourly
     }
 
     public var bucketComponent: Calendar.Component {
@@ -190,6 +200,15 @@ public struct Bucketing: Sendable {
     /// Everything a provider must return: prior period (when requested) plus the
     /// displayed buckets.
     public let fetchRange: DateInterval
+    /// The interval the headline figure covers.
+    ///
+    /// For calendar windows this is the in-progress bucket. For `.hourly` it is
+    /// the trailing 60 minutes, aligned to minute boundaries so a provider that
+    /// reports per-minute rows can sum it exactly.
+    public let headlineRange: DateInterval
+    /// The equal-length interval immediately before `headlineRange`, used for
+    /// the period-over-period delta.
+    public let priorHeadlineRange: DateInterval?
 
     public init(
         window: SpendWindow,
@@ -257,6 +276,33 @@ public struct Bucketing: Sendable {
 
         let fetchStart = prior?.start ?? first
         fetchRange = DateInterval(start: fetchStart, end: last)
+
+        let current = buckets.last ?? DateInterval(start: currentStart, end: currentStart)
+        if window.headlinesTrailingPeriod {
+            // End on the next minute so the in-progress minute is included, and
+            // the 60 minute-buckets in the range line up with provider rows.
+            let end = Self.minuteCeiling(now)
+            let start = end.addingTimeInterval(-3600)
+            headlineRange = DateInterval(start: start, end: end)
+            priorHeadlineRange = includesPriorPeriod
+                ? DateInterval(start: start.addingTimeInterval(-3600), end: start)
+                : nil
+        } else {
+            headlineRange = current
+            if let prior {
+                let elapsed = max(0, now.timeIntervalSince(current.start))
+                priorHeadlineRange = DateInterval(start: prior.start, end: prior.start.addingTimeInterval(elapsed))
+            } else {
+                priorHeadlineRange = nil
+            }
+        }
+    }
+
+    /// Rounds up to the next whole minute, so a range ending here contains every
+    /// minute bucket that has started.
+    static func minuteCeiling(_ date: Date) -> Date {
+        let interval = date.timeIntervalSince1970
+        return Date(timeIntervalSince1970: (interval / 60).rounded(.up) * 60)
     }
 
     /// Index into `displayBuckets` for an instant, or nil when outside them.

@@ -88,6 +88,11 @@ local hour boundary in every zone, since offsets are whole minutes), and
 weekly/monthly windows request day-level rows to keep row counts sane, accepting
 sub-day skew at the bucket boundary.
 
+The hourly headline is a trailing 60 minutes rather than the current clock hour,
+so its boundary generally falls inside an hour bucket. Those two clock hours are
+refetched at minute granularity and merged with the coarse history; the cut sits
+on a clock-hour boundary so the queries cannot double-count a partial bucket.
+
 `Bucketing` walks calendar components backwards rather than subtracting fixed
 durations, so a 23-hour or 25-hour DST day and variable-length months behave
 correctly. `BucketingTests.bucketPartition` asserts that every instant in the
@@ -102,11 +107,13 @@ displayed range maps to exactly one bucket.
   adapter name respectively, so totals always reconcile with what providers
   reported.
 - **Other** absorbs everything past `settings.seriesLimit`, preserving the sum.
-- **Headline** is the current bucket's total, unless the provider reported an
-  authoritative period total (`periodTotals`), which takes precedence — an
+- **Headline** is the total inside `Bucketing.headlineRange`: the in-progress
+  bucket for daily/weekly/monthly, the trailing 60 minutes for hourly. It is
+  accumulated separately from the chart buckets, so it may span two bars. A
+  provider-reported period total (`periodTotals`) still takes precedence — an
   inference key knows today's exact spend even though it cannot show history.
-- **Delta** compares against the prior period truncated to the same elapsed
-  duration (`priorComparableTotal`). Comparing a partial day against a whole day
+- **Delta** compares against `priorHeadlineRange`, the equal-length interval
+  immediately before the headline (`priorComparableTotal`). Comparing a partial day against a whole day
   would manufacture a misleading number on every refresh.
 
 ## State and failure handling

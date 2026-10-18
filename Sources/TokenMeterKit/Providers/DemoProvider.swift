@@ -56,23 +56,37 @@ public struct DemoProvider: SpendProvider {
 
     public func fetchSpend(_ request: SpendRequest) async throws -> SpendFetchResult {
         let calendar = request.calendar
-        let component = request.window.bucketComponent
 
         // Walk the requested range in whole buckets so slices always line up with
         // the caller's display buckets.
-        var bucketStarts: [Date] = []
-        var cursor = Bucketing.interval(component, containing: request.range.start, calendar: calendar)
-        while cursor.start < request.range.end, bucketStarts.count < 400 {
-            bucketStarts.append(cursor.start)
-            guard let next = calendar.date(byAdding: component, value: 1, to: cursor.start) else { break }
-            cursor = Bucketing.interval(component, containing: next, calendar: calendar)
+        var steps: [(start: Date, end: Date)] = []
+        func walk(_ component: Calendar.Component, from lower: Date, to upper: Date) {
+            var cursor = Bucketing.interval(component, containing: lower, calendar: calendar).start
+            while cursor < upper, steps.count < 400 {
+                let end = min(calendar.date(byAdding: component, value: 1, to: cursor) ?? cursor, upper)
+                steps.append((cursor, end))
+                guard let next = calendar.date(byAdding: component, value: 1, to: cursor) else { break }
+                cursor = Bucketing.interval(component, containing: next, calendar: calendar).start
+            }
+        }
+
+        // The hourly headline is a trailing 60 minutes. Like a real provider, the
+        // synthetic one has to emit finer rows over the clock hours it touches;
+        // hour buckets cannot be split at that boundary.
+        let hourlyCut = request.headlineRange
+            .flatMap { calendar.dateInterval(of: .hour, for: $0.start.addingTimeInterval(-3600))?.start }
+        let cut = request.window == .hourly ? hourlyCut : nil
+        if let cut, cut > request.range.start, cut < request.range.end {
+            walk(.hour, from: request.range.start, to: cut)
+            walk(.minute, from: cut, to: request.range.end)
+        } else {
+            walk(request.window.bucketComponent, from: request.range.start, to: request.range.end)
         }
 
         let now = Date()
         var slices: [SpendSlice] = []
 
-        for start in bucketStarts {
-            let end = calendar.date(byAdding: component, value: 1, to: start) ?? start
+        for (start, end) in steps {
             // Everything after "now" is zero, matching a real in-progress bucket.
             guard start < now else { continue }
             let coverage = min(now, end).timeIntervalSince(start) / max(1, end.timeIntervalSince(start))

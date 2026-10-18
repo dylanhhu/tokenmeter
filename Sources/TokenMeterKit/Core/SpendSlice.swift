@@ -99,15 +99,30 @@ public struct SpendRequest: Sendable {
     /// Calendar the caller will bucket with, so providers can align time ranges
     /// to their own server-side buckets if needed.
     public var calendar: Calendar
+    /// The interval the headline will cover. For `.hourly` this is a trailing
+    /// 60 minutes rather than a clock hour, so a provider that can report finer
+    /// than hourly rows should refine its fetch over this range.
+    public var headlineRange: DateInterval?
 
-    public init(window: SpendWindow, range: DateInterval, calendar: Calendar) {
+    public init(
+        window: SpendWindow,
+        range: DateInterval,
+        calendar: Calendar,
+        headlineRange: DateInterval? = nil
+    ) {
         self.window = window
         self.range = range
         self.calendar = calendar
+        self.headlineRange = headlineRange
     }
 
     public init(bucketing: Bucketing) {
-        self.init(window: bucketing.window, range: bucketing.fetchRange, calendar: bucketing.calendar)
+        self.init(
+            window: bucketing.window,
+            range: bucketing.fetchRange,
+            calendar: bucketing.calendar,
+            headlineRange: bucketing.headlineRange
+        )
     }
 }
 

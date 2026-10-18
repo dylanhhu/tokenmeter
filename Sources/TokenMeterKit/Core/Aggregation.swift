@@ -23,6 +23,10 @@ public struct SpendReport: Sendable {
         public var total: Decimal
         /// One value per bucket in `buckets`, aligned by index.
         public var amounts: [Decimal]
+        /// Amount inside `headlineRange`. This differs from `amounts.last` for
+        /// the hourly window, whose headline is a trailing 60 minutes rather
+        /// than the current clock-hour bucket.
+        public var currentAmount: Decimal
         public var isOther: Bool
         /// Number of underlying series folded into an "Other" row.
         public var foldedCount: Int
@@ -57,6 +61,10 @@ public struct SpendReport: Sendable {
     public var grandTotal: Decimal
     /// The figure shown in the menu bar and popover header.
     public var headlineTotal: Decimal
+    /// Slice-derived total for the interval the headline covers. `headlineTotal`
+    /// may instead come from a provider-reported period total, but the breakdown
+    /// always explains this figure.
+    public var currentPeriodTotal: Decimal
     /// True when `headlineTotal` came from a provider-reported period total
     /// rather than being summed from buckets.
     public var headlineIsProviderReported: Bool
@@ -88,6 +96,7 @@ public struct SpendReport: Sendable {
             series: [],
             grandTotal: 0,
             headlineTotal: 0,
+            currentPeriodTotal: 0,
             headlineIsProviderReported: false,
             priorPeriodTotal: nil,
             priorComparableTotal: nil,
@@ -114,17 +123,11 @@ public struct SpendReport: Sendable {
         currentPromptTokens + currentCompletionTokens
     }
 
-    /// Total for the in-progress bucket. This is what the breakdown explains, so
-    /// the figures under the headline share its denominator.
-    public var currentPeriodTotal: Decimal {
-        buckets.last?.total ?? 0
-    }
-
     /// Rows for the in-progress period.
     public var currentBreakdown: [BreakdownRow] {
         let denominator = currentPeriodTotal
         let rows = orderedSeries.enumerated().map { index, series -> BreakdownRow in
-            let amount = series.amounts.last ?? 0
+            let amount = series.currentAmount
             return BreakdownRow(
                 series: series,
                 amount: amount,
@@ -245,7 +248,7 @@ public enum SpendAggregator {
 
         let grandTotal = fold.bucketTotals.reduce(0, +)
         let reportedHeadline = fold.periodTotals[bucketing.window]
-        let headline = reportedHeadline ?? (fold.bucketTotals.last ?? 0)
+        let headline = reportedHeadline ?? fold.headlineTotal
 
         return SpendReport(
             window: bucketing.window,
@@ -254,15 +257,16 @@ public enum SpendAggregator {
             series: rankedSeries(from: fold.accumulator, limit: seriesLimit),
             grandTotal: grandTotal,
             headlineTotal: headline,
+            currentPeriodTotal: fold.headlineTotal,
             headlineIsProviderReported: reportedHeadline != nil,
             priorPeriodTotal: fold.hasPriorData ? fold.priorTotal : (bucketing.includesPriorPeriod ? 0 : nil),
-            priorComparableTotal: fold.hasPriorData ? fold.priorComparable : nil,
+            priorComparableTotal: fold.hasPriorComparable ? fold.priorComparable : nil,
             promptTokens: fold.promptTokens,
             completionTokens: fold.completionTokens,
             requests: fold.requests,
-            currentPromptTokens: fold.bucketPromptTokens.last ?? 0,
-            currentCompletionTokens: fold.bucketCompletionTokens.last ?? 0,
-            currentRequests: fold.bucketRequests.last ?? 0,
+            currentPromptTokens: fold.headlinePromptTokens,
+            currentCompletionTokens: fold.headlineCompletionTokens,
+            currentRequests: fold.headlineRequests,
             hasBreakdown: fold.hasBreakdown,
             capabilities: fold.capabilities,
             warnings: fold.warnings,
@@ -281,13 +285,15 @@ public enum SpendAggregator {
         var priorTotal: Decimal = 0
         var priorComparable: Decimal = 0
         var hasPriorData = false
+        var hasPriorComparable = false
         var hasBreakdown = false
         var promptTokens = 0
         var completionTokens = 0
         var requests = 0
-        var bucketPromptTokens: [Int]
-        var bucketCompletionTokens: [Int]
-        var bucketRequests: [Int]
+        var headlineTotal: Decimal = 0
+        var headlinePromptTokens = 0
+        var headlineCompletionTokens = 0
+        var headlineRequests = 0
     }
 
     private static func fold(
@@ -301,17 +307,8 @@ public enum SpendAggregator {
             accumulator: [:],
             periodTotals: [:],
             capabilities: [:],
-            warnings: [],
-            bucketPromptTokens: [Int](repeating: 0, count: bucketCount),
-            bucketCompletionTokens: [Int](repeating: 0, count: bucketCount),
-            bucketRequests: [Int](repeating: 0, count: bucketCount)
+            warnings: []
         )
-
-        // Elapsed time into the in-progress bucket, used to truncate the prior
-        // period so a comparison covers the same duration.
-        let currentBucketStart = bucketing.currentBucket?.start ?? bucketing.now
-        let elapsed = max(0, bucketing.now.timeIntervalSince(currentBucketStart))
-        let comparableCutoff = bucketing.priorRange.map { $0.start.addingTimeInterval(elapsed) } ?? .distantPast
 
         for contribution in contributions {
             fold.capabilities[contribution.providerID] = contribution.result.capabilities
@@ -321,15 +318,27 @@ public enum SpendAggregator {
                 fold.periodTotals[window] = (fold.periodTotals[window] ?? 0) + total
             }
 
+            // Half-open comparisons rather than `DateInterval.contains`, which
+            // includes its end date: a slice starting exactly at the end of the
+            // headline window belongs to the next period.
+            let headline = bucketing.headlineRange
+            let priorHeadline = bucketing.priorHeadlineRange
             for slice in contribution.result.slices {
-                if let index = bucketing.bucketIndex(for: slice.start) {
-                    accumulate(slice, at: index, grouping: grouping, into: &fold)
-                } else if bucketing.containsInPriorPeriod(slice.start) {
+                let inHeadline = slice.start >= headline.start && slice.start < headline.end
+                accumulate(
+                    slice,
+                    at: bucketing.bucketIndex(for: slice.start),
+                    inHeadline: inHeadline,
+                    grouping: grouping,
+                    into: &fold
+                )
+                if bucketing.containsInPriorPeriod(slice.start) {
                     fold.priorTotal += slice.amount
                     fold.hasPriorData = true
-                    if slice.start < comparableCutoff {
-                        fold.priorComparable += slice.amount
-                    }
+                }
+                if let priorHeadline, slice.start >= priorHeadline.start, slice.start < priorHeadline.end {
+                    fold.priorComparable += slice.amount
+                    fold.hasPriorComparable = true
                 }
             }
         }
@@ -337,19 +346,18 @@ public enum SpendAggregator {
         return fold
     }
 
+    /// Adds a slice to the chart buckets and, when it falls inside the headline
+    /// window, to the headline itself. Keeping the two separate lets the hourly
+    /// headline trail across two clock-hour bars.
     private static func accumulate(
         _ slice: SpendSlice,
-        at index: Int,
+        at index: Int?,
+        inHeadline: Bool,
         grouping: SpendGrouping,
         into fold: inout Fold
     ) {
-        fold.bucketTotals[index] += slice.amount
-        fold.promptTokens += slice.promptTokens
-        fold.completionTokens += slice.completionTokens
-        fold.requests += slice.requests
-        fold.bucketPromptTokens[index] += slice.promptTokens
-        fold.bucketCompletionTokens[index] += slice.completionTokens
-        fold.bucketRequests[index] += slice.requests
+        // Prior slices feed the delta, never a series; do not create zero rows.
+        guard index != nil || inHeadline else { return }
 
         let key = seriesKey(for: slice, grouping: grouping)
         var entry = fold.accumulator[key] ?? SeriesAccumulator(
@@ -358,8 +366,24 @@ public enum SpendAggregator {
             detail: seriesDetail(for: slice, grouping: grouping),
             bucketCount: fold.bucketTotals.count
         )
-        entry.amounts[index] += slice.amount
-        entry.total += slice.amount
+
+        if let index {
+            fold.bucketTotals[index] += slice.amount
+            fold.promptTokens += slice.promptTokens
+            fold.completionTokens += slice.completionTokens
+            fold.requests += slice.requests
+            entry.amounts[index] += slice.amount
+            entry.total += slice.amount
+        }
+
+        if inHeadline {
+            fold.headlineTotal += slice.amount
+            fold.headlinePromptTokens += slice.promptTokens
+            fold.headlineCompletionTokens += slice.completionTokens
+            fold.headlineRequests += slice.requests
+            entry.currentAmount += slice.amount
+        }
+
         fold.accumulator[key] = entry
     }
 
@@ -392,6 +416,7 @@ public enum SpendAggregator {
         )
         for entry in overflow {
             other.total += entry.total
+            other.currentAmount += entry.currentAmount
             for (index, amount) in entry.amounts.enumerated() {
                 other.amounts[index] += amount
             }
@@ -406,6 +431,7 @@ public enum SpendAggregator {
         var detail: String?
         var amounts: [Decimal]
         var total: Decimal = 0
+        var currentAmount: Decimal = 0
 
         init(key: String, label: String, detail: String?, bucketCount: Int) {
             self.key = key
@@ -421,6 +447,7 @@ public enum SpendAggregator {
                 detail: detail,
                 total: total,
                 amounts: amounts,
+                currentAmount: currentAmount,
                 isOther: isOther,
                 foldedCount: foldedCount
             )

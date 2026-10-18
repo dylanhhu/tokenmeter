@@ -55,18 +55,22 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
 
 ## How spend is computed
 
-- **Menu bar figure** is the in-progress period: this hour, today, this week, this
-  month.
+- **Menu bar figure** is the in-progress period: the last 60 minutes, today,
+  this week, or this month. The hourly figure is a rolling hour, not the clock
+  hour to date — at 9:05 it covers 8:05–9:05, not five minutes of activity.
 - **Chart** shows the trailing history for that window — 24 hours, 14 days, 8
-  weeks, or 6 months — as a stacked bar chart. The rightmost bar is the period
-  still in progress, so it is naturally short.
+  weeks, or 6 months — as a stacked bar chart. The rightmost bar is the clock
+  period still in progress, so it is naturally short; for the hourly window the
+  headline can span the last two bars.
 - **Percent change** compares against the *same elapsed duration* of the previous
-  period. Comparing a partial Tuesday against a whole Monday would fabricate a
-  large drop every morning.
+  period — for the hourly window, the 60 minutes before the trailing hour.
+  Comparing a partial Tuesday against a whole Monday would fabricate a large
+  drop every morning.
 - **Buckets follow your calendar.** OpenRouter reports UTC days; the app fetches
   hour-level rows and re-buckets into local time, so 11pm spend lands on the
-  correct day. Weekly and monthly windows use day-level rows and can shift by a
-  few hours at a boundary.
+  correct day. The trailing hour is refetched at minute granularity, because its
+  boundary does not fall on a clock hour. Weekly and monthly windows use
+  day-level rows and can shift by a few hours at a boundary.
 - **Amounts are USD**, summed as `Decimal` rather than `Double` so thousands of
   sub-cent charges do not drift.
 

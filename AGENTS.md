@@ -92,8 +92,10 @@ Break one of these and you have introduced a bug, even if it compiles.
 3. **Capabilities travel with the fetch.** They depend on the credential, not
    just the provider. `capabilities` is populated from `SpendFetchResult`, and
    the UI gates window options and the breakdown control on it.
-4. **The headline figure is the in-progress bucket**, unless the provider reports
-   an authoritative period total (`periodTotals`), which then wins.
+4. **The headline figure is the in-progress period**, unless the provider reports
+   an authoritative period total (`periodTotals`), which then wins. For the
+   hourly window that period is the trailing 60 minutes (`headlineRange`), not
+   the clock hour to date, so it can span two chart buckets.
 5. **The breakdown shares the headline's denominator.** `currentBreakdown` ranks
    series by the in-progress period; `windowBreakdown` ranks by the whole window.
    Never mix the two — a "$45" row under a "$9.50 today" headline is a bug report

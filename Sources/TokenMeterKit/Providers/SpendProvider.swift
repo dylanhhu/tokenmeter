@@ -46,6 +46,9 @@ public struct ProviderDescriptor: Sendable, Identifiable, Hashable {
 /// Contract for `fetchSpend`:
 /// - Return slices bucketed no more coarsely than `request.window`.
 /// - Cover `request.range`, which includes the prior comparison period.
+/// - When the provider can produce rows finer than hourly, refine the tail over
+///   `request.headlineRange`: an hourly headline is a trailing 60 minutes and
+///   cannot be reconstructed from clock-hour buckets.
 /// - Report honest `capabilities` for the credentials in use; the app uses them
 ///   to gate window options and breakdown UI.
 /// - Prefer `periodTotals` only when authoritative period figures exist and

@@ -41,13 +41,10 @@ public struct OpenRouterProvider: SpendProvider {
     /// Longest time range the analytics endpoint accepts in one request.
     ///
     /// The server resolves a per-query cap from the requested metrics and
-    /// dimensions. `hour` granularity reads the minute rollup, and
-    /// generations-only dimensions such as `provider` never use the daily
-    /// rollup, so both are capped at 31 days; going over is a hard 400
-    /// ("time_range exceeds maximum of 31 days for the requested
-    /// metrics/dimensions"). Weekly and monthly windows span months once the
-    /// prior comparison period is included, so the range is issued as several
-    /// segments instead of one request.
+    /// dimensions. Minute/hour granularity and generations-only dimensions such
+    /// as `provider` are capped at 31 days; going over is a hard 400. Weekly and
+    /// monthly windows span months once the prior comparison period is
+    /// included, so the range is issued as several segments.
     static let maxDaysPerQuery = 30
 
     private let apiKey: String
@@ -115,59 +112,76 @@ public struct OpenRouterProvider: SpendProvider {
             extraMetrics.append(metric)
         }
 
-        let segments = Self.querySegments(for: request.range)
         var warnings: [String] = []
-        var usedGranularity = granularity
+        var chunks: [(rows: [[String: Any]], granularity: String)] = []
+        var truncated = false
 
-        var (rows, truncated) = try await self.rows(
-            segments: segments,
-            granularity: granularity,
-            spendMetric: schema.spendMetric,
-            extraMetrics: extraMetrics,
-            dimensions: dimensions
-        )
-
-        // A truncated result loses whole time buckets, so prefer a coarser
-        // granularity over silently under-reporting.
-        if truncated, granularity == "hour", request.window != .hourly, schema.granularities.contains("day") {
-            usedGranularity = "day"
-            (rows, truncated) = try await self.rows(
-                segments: segments,
-                granularity: usedGranularity,
+        // The coarse query covers everything before the trailing clock hours; the
+        // fine query covers those at minute resolution so the trailing-hour
+        // boundary can be resolved.
+        let split = Self.minuteRefinementStart(for: request, schema: schema)
+        let plan: [(range: DateInterval, granularity: String)] = if let split {
+            [
+                (DateInterval(start: request.range.start, end: split), granularity),
+                (DateInterval(start: split, end: request.range.end), "minute"),
+            ]
+        } else {
+            [(request.range, granularity)]
+        }
+        for step in plan where step.range.duration > 0 {
+            let page = try await rows(
+                segments: Self.querySegments(for: step.range),
+                granularity: step.granularity,
                 spendMetric: schema.spendMetric,
                 extraMetrics: extraMetrics,
                 dimensions: dimensions
             )
+            chunks.append((page.rows, step.granularity))
+            truncated = truncated || page.truncated
+            if page.truncated, step.granularity == "minute" {
+                warnings.append("Minute detail for the last hour was truncated; the last-hour figure may be incomplete.")
+            }
+        }
+
+        // A truncated result loses whole time buckets, so prefer a coarser
+        // granularity over silently under-reporting.
+        if truncated, granularity == "hour", request.window != .hourly, schema.granularities.contains("day") {
+            let page = try await rows(
+                segments: Self.querySegments(for: request.range),
+                granularity: "day",
+                spendMetric: schema.spendMetric,
+                extraMetrics: extraMetrics,
+                dimensions: dimensions
+            )
+            chunks = [(page.rows, "day")]
+            truncated = page.truncated
             warnings.append("Hourly detail exceeded the API row limit; showing daily resolution.")
         }
         if truncated {
             warnings.append("Results were truncated by the API; totals may be incomplete.")
         }
 
-        Log.providers.debug(
-            "openrouter analytics rows=\(rows.count, privacy: .public) granularity=\(usedGranularity, privacy: .public)"
-        )
+        var slices = chunks.flatMap { chunk in
+            Self.slices(from: chunk.rows, granularity: chunk.granularity, dimensions: dimensions, schema: schema)
+        }
+        let rowCount = chunks.reduce(0) { $0 + $1.rows.count }
+        slices = Self.merged(slices)
 
-        let slices = Self.merged(
-            Self.slices(
-                from: rows,
-                granularity: usedGranularity,
-                dimensions: dimensions,
-                schema: schema
-            )
-        )
-        if let warning = Self.rowReconciliationWarning(rowCount: rows.count, sliceCount: slices.count) {
+        let granularities = chunks.map(\.granularity).joined(separator: "+")
+        Log.providers.debug("openrouter analytics rows=\(rowCount, privacy: .public) granularity=\(granularities, privacy: .public)")
+
+        if let warning = Self.rowReconciliationWarning(rowCount: rowCount, sliceCount: slices.count) {
             warnings.append(warning)
-            let columns = rows.first.map { $0.keys.sorted().joined(separator: ",") } ?? "-"
-            let sample = rows.first.flatMap(FlexibleJSON.timeBucket).map { bucket in
-                bucket.value.map { "\(bucket.key)=\($0) [\(type(of: $0))]" } ?? "\(bucket.key)=nil"
-            } ?? "no time column"
+            let first = chunks.first?.rows.first
+            let columns = first.map { $0.keys.sorted().joined(separator: ",") } ?? "-"
+            let sample = first.flatMap(FlexibleJSON.timeBucket).map { "\($0.key)=\($0.value ?? "nil")" } ?? "no time column"
             Log.providers.notice("openrouter: \(warning, privacy: .public) columns=\(columns, privacy: .public)")
             Log.providers.notice("openrouter: time bucket sample \(sample, privacy: .public)")
         }
 
         var capabilities = Self.managementCapabilities(for: schema)
-        capabilities.nativeGranularity = usedGranularity == "hour" ? .hourly : .daily
+        let finest = chunks.contains { $0.granularity == "minute" } ? "minute" : granularity
+        capabilities.nativeGranularity = finest == "hour" || finest == "minute" ? .hourly : .daily
 
         return SpendFetchResult(
             slices: slices,
@@ -175,6 +189,24 @@ public struct OpenRouterProvider: SpendProvider {
             periodTotals: [:],
             warnings: warnings
         )
+    }
+
+    /// Where the minute-resolution tail begins, or nil when the whole range can
+    /// be fetched coarse. Cutting on a UTC hour keeps the coarse query's last hour
+    /// bucket complete and stops the two queries from overlapping.
+    ///
+    /// The tail starts an hour before the headline so the prior hour the delta
+    /// compares against is resolved at the same granularity.
+    static func minuteRefinementStart(for request: SpendRequest, schema: OpenRouterClient.Schema) -> Date? {
+        guard request.window == .hourly,
+              schema.granularities.contains("minute"),
+              let headline = request.headlineRange
+        else { return nil }
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        let priorStart = headline.start.addingTimeInterval(-3600)
+        guard let hourStart = utc.dateInterval(of: .hour, for: priorStart)?.start else { return nil }
+        return max(hourStart, request.range.start)
     }
 
     /// Runs one query per segment and concatenates the rows.
@@ -303,11 +335,7 @@ public struct OpenRouterProvider: SpendProvider {
                 return nil
             }
 
-            let end = Bucketing.bucketEnd(
-                for: start,
-                window: SpendWindow.allCases.first { $0.bucketComponent == component } ?? .daily,
-                calendar: calendar
-            )
+            let end = calendar.date(byAdding: component, value: 1, to: start) ?? start
 
             return SpendSlice(
                 start: start,
@@ -417,7 +445,9 @@ public struct OpenRouterProvider: SpendProvider {
         if schema.granularities.contains("day") {
             windows.formUnion([.daily])
         }
-        if schema.granularities.contains("hour") {
+        // The hourly headline is a trailing 60 minutes, which needs minute rows
+        // to resolve its boundary; hour-only accounts fall back to daily.
+        if schema.granularities.contains("hour"), schema.granularities.contains("minute") {
             windows.insert(.hourly)
         }
         return ProviderCapabilities(

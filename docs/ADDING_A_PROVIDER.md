@@ -118,6 +118,11 @@ public static func makeProvider(id: ProviderID, credential: String?) -> (any Spe
   `capabilities` and return nothing for it.
 - **Cover `request.range`.** It extends one full period before the visible range
   so the delta badge has a baseline.
+- **Refine `request.headlineRange` when you can.** The hourly headline is a
+  trailing 60 minutes, whose boundary is not a clock hour. If the vendor exposes
+  minute rows, fetch the clock hours that window touches at that resolution;
+  otherwise remove `.hourly` from `capabilities`, because hour rows cannot
+  resolve it.
 - **Leave attribution nil when unknown.** `model: "unknown"` becomes a real series
   named "unknown" and pollutes the legend; `nil` becomes "Unattributed".
 - **Prefer slices over `periodTotals`.** Only use `periodTotals` when the vendor

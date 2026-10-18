@@ -120,6 +120,38 @@ struct BucketingTests {
         #expect(bucketing.bucketIndex(for: now) == 23)
     }
 
+    @Test("Hourly headline is the trailing 60 minutes, not the clock hour")
+    func hourlyHeadlineTrailsNow() throws {
+        let calendar = Self.calendar()
+        let now = Self.date(calendar, 2026, 3, 10, 14, 37)
+        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: now)
+
+        // The endpoint is the next whole minute, so an in-progress minute is
+        // included; on an exact minute boundary it is the completed hour.
+        let headline = bucketing.headlineRange
+        #expect(headline.end == now)
+        #expect(headline.start == Self.date(calendar, 2026, 3, 10, 13, 37))
+        #expect(headline.duration == 3600)
+        #expect(headline.contains(now))
+        // The rolling figure still sits inside the chart's 24-hour history.
+        #expect(bucketing.displayRange.start <= headline.start)
+        #expect(headline.end <= bucketing.displayRange.end)
+
+        let prior = try #require(bucketing.priorHeadlineRange)
+        #expect(prior.end == headline.start)
+        #expect(prior.duration == 3600)
+    }
+
+    @Test("Calendar windows headline the in-progress bucket")
+    func calendarHeadlineIsCurrentBucket() {
+        let calendar = Self.calendar()
+        let now = Self.date(calendar, 2026, 3, 10, 14, 37)
+        for window in [SpendWindow.daily, .weekly, .monthly] {
+            let bucketing = Bucketing(window: window, calendar: calendar, now: now)
+            #expect(bucketing.headlineRange == bucketing.currentBucket)
+        }
+    }
+
     @Test("Timestamps outside the display range map to no bucket")
     func outOfRange() throws {
         let calendar = Self.calendar()
