@@ -117,33 +117,7 @@ public struct DemoProvider: SpendProvider {
 
     public func fetchSpend(_ request: SpendRequest) async throws -> SpendFetchResult {
         let calendar = request.calendar
-
-        // Walk the requested range in whole buckets so slices always line up with
-        // the caller's display buckets.
-        var steps: [(start: Date, end: Date)] = []
-        func walk(_ component: Calendar.Component, from lower: Date, to upper: Date) {
-            var cursor = Bucketing.interval(component, containing: lower, calendar: calendar).start
-            while cursor < upper, steps.count < 400 {
-                let end = min(calendar.date(byAdding: component, value: 1, to: cursor) ?? cursor, upper)
-                steps.append((cursor, end))
-                guard let next = calendar.date(byAdding: component, value: 1, to: cursor) else { break }
-                cursor = Bucketing.interval(component, containing: next, calendar: calendar).start
-            }
-        }
-
-        // The hourly headline is a trailing 60 minutes. Like a real provider, the
-        // synthetic one has to emit finer rows over the clock hours it touches;
-        // hour buckets cannot be split at that boundary.
-        let hourlyCut = request.headlineRange
-            .flatMap { calendar.dateInterval(of: .hour, for: $0.start.addingTimeInterval(-3600))?.start }
-        let cut = request.window == .hourly ? hourlyCut : nil
-        if let cut, cut > request.range.start, cut < request.range.end {
-            walk(.hour, from: request.range.start, to: cut)
-            walk(.minute, from: cut, to: request.range.end)
-        } else {
-            walk(request.window.bucketComponent, from: request.range.start, to: request.range.end)
-        }
-
+        let steps = Self.steps(for: request, calendar: calendar)
         let now = Date()
         var slices: [SpendSlice] = []
 
@@ -196,6 +170,63 @@ public struct DemoProvider: SpendProvider {
             warnings: ["Showing synthetic sample data."],
             account: ProviderAccountInfo(credentialLabel: "Sample data", isManagementCredential: true)
         )
+    }
+
+    /// Walks the requested range in whole buckets so slices always line up with
+    /// the caller's display buckets.
+    ///
+    /// A rolling headline starts and ends mid-bucket, so — like a real provider —
+    /// the synthetic one emits finer rows over the coarse buckets those two
+    /// boundaries fall in; a coarse bucket cannot be split at that boundary.
+    private static func steps(
+        for request: SpendRequest,
+        calendar: Calendar
+    ) -> [(start: Date, end: Date)] {
+        var steps: [(start: Date, end: Date)] = []
+        func walk(_ component: Calendar.Component, from lower: Date, to upper: Date) {
+            var cursor = Bucketing.interval(component, containing: lower, calendar: calendar).start
+            while cursor < upper, steps.count < 1_200 {
+                let end = min(calendar.date(byAdding: component, value: 1, to: cursor) ?? cursor, upper)
+                steps.append((cursor, end))
+                guard let next = calendar.date(byAdding: component, value: 1, to: cursor) else { break }
+                cursor = Bucketing.interval(component, containing: next, calendar: calendar).start
+            }
+        }
+
+        let coarse: Calendar.Component = switch request.window {
+        case .hourly, .daily: .hour
+        case .weekly, .monthly: .day
+        }
+        let fine: Calendar.Component = switch request.window {
+        case .hourly, .daily: .minute
+        case .weekly, .monthly: .hour
+        }
+
+        var windows: [DateInterval] = []
+        if request.scope == .trailing, let headline = request.headlineRange {
+            for boundary in [headline.start.addingTimeInterval(-headline.duration), headline.start] {
+                guard let bucket = calendar.dateInterval(of: coarse, for: boundary),
+                      bucket.start != boundary else { continue }
+                let start = max(bucket.start, request.range.start)
+                let end = min(bucket.end, request.range.end)
+                if start < end {
+                    windows.append(DateInterval(start: start, end: end))
+                }
+            }
+        }
+
+        var cursor = request.range.start
+        for window in windows.sorted(by: { $0.start < $1.start }) where window.start >= cursor {
+            if cursor < window.start {
+                walk(coarse, from: cursor, to: window.start)
+            }
+            walk(fine, from: window.start, to: window.end)
+            cursor = window.end
+        }
+        if cursor < request.range.end {
+            walk(coarse, from: cursor, to: request.range.end)
+        }
+        return steps
     }
 
     /// Deterministic value in roughly 0.7…1.6 so bars do not look uniform.

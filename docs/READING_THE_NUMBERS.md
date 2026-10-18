@@ -27,9 +27,11 @@ the headline figure. A row reading `34.2% of tokens` under `$9.50 today` is
 share computed over a different interval than the headline would invite
 comparing two numbers that describe different populations.
 
-The hourly window is the one case where the period and the last bar diverge: its
-headline is the trailing 60 minutes, which can span two clock-hour buckets.
-Token and request shares follow that rolling interval, not the last bar.
+The headline period and the last bar diverge whenever the period is **rolling**.
+"Last 7 days" ends at the current moment, so it straddles two calendar-week bars;
+"this week" is the current bar to date. Token and request shares follow the
+headline's interval either way. The popover's period control labels both readings
+("This week" / "Last 7 days") so the denominator is never implied.
 
 Colours come from the window-wide spend ranking, not list position. A series
 keeps its chart colour when the list is re-sorted by tokens.
@@ -143,6 +145,15 @@ The rate multiple is relative to the window's blended rate. Use it to decide
 whether the expense is structural (a frontier model doing the hard third of the
 work, and worth it) or incidental (a default setting routing bulk jobs to the
 expensive model).
+
+## Rolling periods are resolved to the hour at worst
+
+A rolling headline needs rows finer than the bucket it sits in. The adapter asks
+for them around the two boundaries, so the figure is exact to a minute for
+hourly and daily windows and to an hour for weekly and monthly ones. A provider
+that cannot produce finer rows does not offer the rolling reading at all — the
+app hides the control rather than showing a rolling number that is really the
+calendar period.
 
 ## Efficiency covers the window, not the headline
 

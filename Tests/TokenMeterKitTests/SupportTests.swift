@@ -108,6 +108,7 @@ struct SupportTests {
     func settingsCoding() throws {
         let settings = AppSettings(
             menuBarWindow: .monthly,
+            windowScope: .trailing,
             grouping: .provider,
             breakdownMeasure: .tokens,
             refreshInterval: 900,
@@ -128,8 +129,19 @@ struct SupportTests {
         let partial = Data(#"{"menuBarWindow":"weekly"}"#.utf8)
         let partialDecoded = try JSONDecoder().decode(AppSettings.self, from: partial)
         #expect(partialDecoded.menuBarWindow == .weekly)
+        #expect(partialDecoded.windowScope == .calendar)
         #expect(partialDecoded.refreshInterval == AppSettings.default.refreshInterval)
         #expect(partialDecoded.breakdownMeasure == .spend)
+
+        // Settings written before the scope existed kept the hourly window on
+        // the trailing hour, so that reading survives the upgrade.
+        let legacyHourly = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"menuBarWindow":"hourly"}"#.utf8))
+        #expect(legacyHourly.windowScope == .trailing)
+        let explicit = try JSONDecoder().decode(
+            AppSettings.self,
+            from: Data(#"{"menuBarWindow":"hourly","windowScope":"calendar"}"#.utf8)
+        )
+        #expect(explicit.windowScope == .calendar)
     }
 
     @Test("Refetch and rebuild decisions are distinct")
@@ -143,6 +155,12 @@ struct SupportTests {
         var window = base
         window.menuBarWindow = .monthly
         #expect(window.requiresRefetch(comparedTo: base))
+
+        // The scope changes which rows the provider has to resolve, so cached
+        // data cannot answer the other reading.
+        var scope = base
+        scope.windowScope = .trailing
+        #expect(scope.requiresRefetch(comparedTo: base))
 
         // Switching the measure only changes how cached data is ranked, so it
         // must not trigger a provider round trip.

@@ -90,13 +90,8 @@ struct OpenRouterTests {
 
     @Test("Server granularity is fine enough to re-bucket local days")
     func granularityChoice() {
-        let calendar = Self.calendar()
-        let bucketing = Bucketing(window: .daily, calendar: calendar, now: Date())
-        let request = SpendRequest(bucketing: bucketing)
-        #expect(OpenRouterProvider.serverGranularity(for: request, schema: Self.schema) == "hour")
-
-        let monthly = SpendRequest(bucketing: Bucketing(window: .monthly, calendar: calendar, now: Date()))
-        #expect(OpenRouterProvider.serverGranularity(for: monthly, schema: Self.schema) == "day")
+        #expect(OpenRouterProvider.serverGranularity(for: .daily, schema: Self.schema) == "hour")
+        #expect(OpenRouterProvider.serverGranularity(for: .monthly, schema: Self.schema) == "day")
 
         let coarse = OpenRouterClient.Schema(
             spendMetric: "total_usage",
@@ -105,7 +100,7 @@ struct OpenRouterTests {
             dimensions: ["model"],
             granularities: ["day"]
         )
-        #expect(OpenRouterProvider.serverGranularity(for: request, schema: coarse) == "day")
+        #expect(OpenRouterProvider.serverGranularity(for: .daily, schema: coarse) == "day")
     }
 
     @Test("Minute rows map to one-minute slices")
@@ -122,18 +117,34 @@ struct OpenRouterTests {
         #expect(slices[0].end.timeIntervalSince(slices[0].start) == 60)
     }
 
-    @Test("Hourly requests refine the trailing window from an hour boundary")
-    func minuteRefinement() throws {
+    @Test("A rolling headline refines only the buckets its boundaries fall in")
+    func rollingQueryPlan() throws {
         let calendar = Self.calendar()
         let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9, minute: 25)))
-        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: now)
+        let bucketing = Bucketing(window: .hourly, scope: .trailing, calendar: calendar, now: now)
         let request = SpendRequest(bucketing: bucketing)
 
-        // The trailing window starts at 08:26 and its prior hour at 07:26, so the
-        // minute tail must begin at 07:00; the cut lands on a UTC hour so the
-        // coarse and fine queries cannot double-count a partial bucket.
-        let start = try #require(OpenRouterProvider.minuteRefinementStart(for: request, schema: Self.schema))
-        #expect(start == calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 7)))
+        // The headline runs 08:26–09:26 and its comparison period 07:26–08:26,
+        // so the 07:00 and 08:00 clock hours need minute rows and everything else
+        // stays hourly.
+        let plan = OpenRouterProvider.queryPlan(for: request, coarse: "hour", schema: Self.schema)
+        let fine = plan.filter { $0.granularity == "minute" }
+        #expect(fine.count == 1)
+        #expect(fine.first?.range.start == calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 7)))
+        // Adjacent boundary buckets merge into one contiguous minute segment.
+        #expect(fine.first?.range.end == calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9)))
+
+        // The segments partition the fetch range: no gap, no overlap, so no bucket
+        // is dropped or counted twice.
+        #expect(plan.first?.range.start == request.range.start)
+        #expect(plan.last?.range.end == request.range.end)
+        for (previous, next) in zip(plan, plan.dropFirst()) {
+            #expect(previous.range.end == next.range.start)
+        }
+
+        // Calendar headlines already line up with the buckets.
+        let calendarRequest = SpendRequest(bucketing: Bucketing(window: .hourly, calendar: calendar, now: now))
+        #expect(OpenRouterProvider.queryPlan(for: calendarRequest, coarse: "hour", schema: Self.schema).count == 1)
 
         let hourOnly = OpenRouterClient.Schema(
             spendMetric: "total_usage",
@@ -142,10 +153,56 @@ struct OpenRouterTests {
             dimensions: ["model"],
             granularities: ["hour", "day"]
         )
-        #expect(OpenRouterProvider.minuteRefinementStart(for: request, schema: hourOnly) == nil)
-        // Without minute rows the trailing figure cannot be resolved, so hourly
-        // must not be advertised.
+        // Without minute rows the rolling boundary cannot be resolved, so neither
+        // the plan nor the capability may claim it.
+        #expect(OpenRouterProvider.queryPlan(for: request, coarse: "hour", schema: hourOnly).count == 1)
         #expect(!OpenRouterProvider.managementCapabilities(for: hourOnly).supports(.hourly))
+        #expect(!OpenRouterProvider.managementCapabilities(for: hourOnly).supports(.hourly, scope: .trailing))
+    }
+
+    @Test("Rolling weekly and monthly headlines refine one day at a time")
+    func rollingPlanForLongWindows() throws {
+        let calendar = Self.calendar()
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9, minute: 25)))
+
+        for window in [SpendWindow.weekly, .monthly] {
+            let request = SpendRequest(bucketing: Bucketing(window: window, scope: .trailing, calendar: calendar, now: now))
+            let plan = OpenRouterProvider.queryPlan(for: request, coarse: "day", schema: Self.schema)
+
+            // Day rows cover the history; only the days the boundaries fall in are
+            // refetched hourly, which keeps the request count and row count flat.
+            let fine = plan.filter { $0.granularity == "hour" }
+            #expect(fine.isEmpty == false)
+            #expect(fine.allSatisfy { $0.range.duration <= 86_400 })
+            #expect(plan.first?.range.start == request.range.start)
+            #expect(plan.last?.range.end == request.range.end)
+            for (previous, next) in zip(plan, plan.dropFirst()) {
+                #expect(previous.range.end == next.range.start)
+            }
+        }
+    }
+
+    @Test("Rolling capability follows the granularity needed at the boundary")
+    func rollingCapabilities() {
+        let full = OpenRouterProvider.managementCapabilities(for: Self.schema)
+        #expect(full.rollingWindows == Set(SpendWindow.allCases))
+
+        // Day rows and coarser: no rolling boundary can be resolved, so the
+        // calendar readings stay available and the rolling ones do not.
+        let dayOnly = OpenRouterClient.Schema(
+            spendMetric: "total_usage",
+            tokenMetrics: .init(total: nil, prompt: nil, completion: nil),
+            requestMetric: nil,
+            dimensions: ["model"],
+            granularities: ["day", "week", "month"]
+        )
+        let dayCapabilities = OpenRouterProvider.managementCapabilities(for: dayOnly)
+        #expect(dayCapabilities.supports(.daily))
+        #expect(dayCapabilities.rollingWindows.isEmpty)
+
+        // `/key` reports calendar totals only.
+        #expect(OpenRouterProvider.inferenceKeyCapabilities.supports(.daily))
+        #expect(OpenRouterProvider.inferenceKeyCapabilities.rollingWindows.isEmpty)
     }
 
     @Test("Dimensions prefer model then provider, capped at two")

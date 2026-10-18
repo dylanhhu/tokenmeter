@@ -43,7 +43,8 @@ public struct ProviderID: RawRepresentable, Hashable, Codable, Sendable, Express
 /// `nil` and the aggregator labels it accordingly.
 public struct SpendSlice: Sendable, Hashable {
     /// Start of the period this slice covers. Providers must bucket this at
-    /// least as finely as the requested window.
+    /// least as finely as the requested window, and finer around a rolling
+    /// headline boundary so it can be summed exactly.
     public var start: Date
     /// End of the period (exclusive).
     public var end: Date
@@ -94,23 +95,30 @@ public struct SpendRequest: Sendable {
     /// Window being displayed; providers should bucket their output at least this
     /// finely.
     public var window: SpendWindow
+    /// Whether the headline is a calendar period or a rolling one.
+    public var scope: WindowScope
     /// The full range to fetch, including the prior comparison period.
     public var range: DateInterval
     /// Calendar the caller will bucket with, so providers can align time ranges
     /// to their own server-side buckets if needed.
     public var calendar: Calendar
-    /// The interval the headline will cover. For `.hourly` this is a trailing
-    /// 60 minutes rather than a clock hour, so a provider that can report finer
-    /// than hourly rows should refine its fetch over this range.
+    /// The interval the headline will cover, and the equal-length interval before
+    /// it that the delta compares against.
+    ///
+    /// Under `.trailing` the headline begins and ends mid-bucket, so a provider
+    /// that can report rows finer than the window bucket should refine its fetch
+    /// around these two boundaries. Calendar headlines need no refinement.
     public var headlineRange: DateInterval?
 
     public init(
         window: SpendWindow,
+        scope: WindowScope = .calendar,
         range: DateInterval,
         calendar: Calendar,
         headlineRange: DateInterval? = nil
     ) {
         self.window = window
+        self.scope = scope
         self.range = range
         self.calendar = calendar
         self.headlineRange = headlineRange
@@ -119,6 +127,7 @@ public struct SpendRequest: Sendable {
     public init(bucketing: Bucketing) {
         self.init(
             window: bucketing.window,
+            scope: bucketing.scope,
             range: bucketing.fetchRange,
             calendar: bucketing.calendar,
             headlineRange: bucketing.headlineRange
@@ -132,6 +141,13 @@ public struct SpendRequest: Sendable {
 public struct ProviderCapabilities: Sendable, Equatable {
     /// Windows the provider can fill with correctly sized buckets.
     public var windows: Set<SpendWindow>
+    /// Windows whose rolling headline the provider can resolve.
+    ///
+    /// A rolling headline starts and ends mid-bucket, so it is only summable
+    /// from rows finer than the bucket. Credentials that report period totals or
+    /// day-level rows only cannot produce one, and the UI hides the rolling
+    /// option rather than showing a figure that silently means something else.
+    public var rollingWindows: Set<SpendWindow>
     /// Whether slices carry a model dimension.
     public var hasModelBreakdown: Bool
     /// Whether slices carry an upstream provider dimension.
@@ -143,12 +159,16 @@ public struct ProviderCapabilities: Sendable, Equatable {
 
     public init(
         windows: Set<SpendWindow> = Set(SpendWindow.allCases),
+        rollingWindows: Set<SpendWindow>? = nil,
         hasModelBreakdown: Bool = false,
         hasProviderBreakdown: Bool = false,
         nativeGranularity: SpendWindow? = nil,
         notes: [String] = []
     ) {
         self.windows = windows
+        // Adapters that can bucket a window can usually refine its boundary too;
+        // the ones that cannot say so explicitly.
+        self.rollingWindows = rollingWindows ?? windows
         self.hasModelBreakdown = hasModelBreakdown
         self.hasProviderBreakdown = hasProviderBreakdown
         self.nativeGranularity = nativeGranularity
@@ -161,8 +181,17 @@ public struct ProviderCapabilities: Sendable, Equatable {
         hasModelBreakdown || hasProviderBreakdown
     }
 
-    public func supports(_ window: SpendWindow) -> Bool {
-        windows.contains(window)
+    public func supports(_ window: SpendWindow, scope: WindowScope = .calendar) -> Bool {
+        supportedWindows(for: scope).contains(window)
+    }
+
+    /// Windows fillable under a scope. Rolling headlines need finer rows than
+    /// calendar ones, so the two sets can differ for the same credential.
+    public func supportedWindows(for scope: WindowScope) -> Set<SpendWindow> {
+        switch scope {
+        case .calendar: windows
+        case .trailing: rollingWindows
+        }
     }
 
     public var bestWindow: SpendWindow? {

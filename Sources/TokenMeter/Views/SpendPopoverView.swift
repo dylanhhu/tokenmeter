@@ -86,31 +86,48 @@ struct SpendPopoverView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Picker("Window", selection: windowBinding) {
-                ForEach(model.availableWindows) { window in
-                    Text(window.title).tag(window)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Picker("Window", selection: windowBinding) {
+                    ForEach(model.availableWindows) { window in
+                        Text(window.title).tag(window)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
 
-            Menu {
-                Button("Refresh Now") { model.refresh(reason: "manual", force: true) }
-                    .keyboardShortcut("r")
-                Button("Settings…") { openSettings() }
-                    .keyboardShortcut(",")
-                Divider()
-                Button("Quit TokenMeter") { NSApplication.shared.terminate(nil) }
-                    .keyboardShortcut("q")
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
+                Menu {
+                    Button("Refresh Now") { model.refresh(reason: "manual", force: true) }
+                        .keyboardShortcut("r")
+                    Button("Settings…") { openSettings() }
+                        .keyboardShortcut(",")
+                    Divider()
+                    Button("Quit TokenMeter") { NSApplication.shared.terminate(nil) }
+                        .keyboardShortcut("q")
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 20)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 20)
+
+            // The window picker says how wide the period is; this one says where
+            // it sits. Labels spell out both readings rather than "calendar" and
+            // "rolling", so the figure below is never ambiguous.
+            if model.supportsRollingScope {
+                Picker("Period", selection: scopeBinding) {
+                    ForEach([WindowScope.calendar, .trailing], id: \.self) { scope in
+                        Text(model.periodLabel(for: scope)).tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .help("Switch between the period in progress and the same length of time ending now")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -127,6 +144,13 @@ struct SpendPopoverView: View {
         )
     }
 
+    private var scopeBinding: Binding<WindowScope> {
+        Binding(
+            get: { model.settings.windowScope },
+            set: { model.setScope($0) }
+        )
+    }
+
     // MARK: - Headline
 
     private func headline(_ report: SpendReport) -> some View {
@@ -140,10 +164,7 @@ struct SpendPopoverView: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if let change = report.priorPeriodChange {
-                    DeltaBadge(
-                        change: change,
-                        caption: "Versus the same elapsed time in the previous period"
-                    )
+                    DeltaBadge(change: change, caption: report.priorComparisonCaption)
                 }
             }
 

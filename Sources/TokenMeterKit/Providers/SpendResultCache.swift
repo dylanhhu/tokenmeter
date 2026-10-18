@@ -4,7 +4,7 @@ import Foundation
 /// popover, flipping through window tabs — does not re-query the vendor.
 ///
 /// An entry is keyed by the inputs that change the shape of a response:
-/// provider, window, and bucketing time zone. It is served only while it is
+/// provider, window, scope, and bucketing time zone. It is served only while it is
 /// younger than the TTL *and* still covers the range being requested. The second
 /// condition matters because a result stops describing the current hour or day
 /// as the clock advances, even if it was fetched seconds ago.
@@ -16,13 +16,18 @@ public actor SpendResultCache {
     public struct Key: Hashable, Sendable {
         public var providerID: ProviderID
         public var window: SpendWindow
+        /// Scope changes what the provider must resolve, not just how the app
+        /// labels the total: a calendar result lacks the fine rows a rolling
+        /// headline needs.
+        public var scope: WindowScope
         /// Identifier rather than a `TimeZone`, whose equality includes DST
         /// state and would needlessly split entries.
         public var timeZoneIdentifier: String
 
-        public init(providerID: ProviderID, window: SpendWindow, timeZoneIdentifier: String) {
+        public init(providerID: ProviderID, window: SpendWindow, scope: WindowScope, timeZoneIdentifier: String) {
             self.providerID = providerID
             self.window = window
+            self.scope = scope
             self.timeZoneIdentifier = timeZoneIdentifier
         }
 
@@ -32,6 +37,7 @@ public actor SpendResultCache {
             self.init(
                 providerID: providerID,
                 window: request.window,
+                scope: request.scope,
                 timeZoneIdentifier: request.calendar.timeZone.identifier
             )
         }

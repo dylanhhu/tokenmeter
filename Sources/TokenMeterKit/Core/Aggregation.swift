@@ -53,7 +53,12 @@ public struct SpendReport: Sendable {
     /// bucket's interval has to be formatted in the same zone it was built in,
     /// or a UTC bucket renders in local time.
     public var calendar: Calendar
+    public var scope: WindowScope
     public var grouping: SpendGrouping
+    /// The interval the headline, the current breakdown, and the delta describe.
+    /// Kept here so captions can state the span instead of assuming a calendar
+    /// period.
+    public var headlineRange: DateInterval
     public var buckets: [Bucket]
     public var series: [Series]
     /// Sum of every displayed bucket.
@@ -65,7 +70,7 @@ public struct SpendReport: Sendable {
     /// always explains this figure.
     public var currentPeriodTotal: Decimal
     /// True when `headlineTotal` came from a provider-reported period total
-    /// rather than being summed from buckets.
+    /// rather than being summed from buckets. Never true under a rolling scope.
     public var headlineIsProviderReported: Bool
     /// Same window, immediately before the displayed range.
     public var priorPeriodTotal: Decimal?
@@ -89,6 +94,7 @@ public struct SpendReport: Sendable {
 
     public static func empty(
         window: SpendWindow,
+        scope: WindowScope = .calendar,
         grouping: SpendGrouping,
         buckets: [Bucket],
         calendar: Calendar
@@ -96,7 +102,9 @@ public struct SpendReport: Sendable {
         SpendReport(
             window: window,
             calendar: calendar,
+            scope: scope,
             grouping: grouping,
+            headlineRange: DateInterval(start: buckets.first?.start ?? .now, end: buckets.last?.end ?? .now),
             buckets: buckets,
             series: [],
             grandTotal: 0,
@@ -122,24 +130,14 @@ public struct SpendReport: Sendable {
         promptTokens + completionTokens
     }
 
+    public var isEmpty: Bool {
+        grandTotal == 0 && headlineTotal == 0
+    }
+
     /// Token count for the in-progress period, so the figure sits under the same
     /// denominator as the headline.
     public var currentTokens: Int {
         currentPromptTokens + currentCompletionTokens
-    }
-
-    /// Caption for the denominator behind `currentBreakdown`.
-    public var currentBreakdownLabel: String {
-        window.headlineNoun
-    }
-
-    /// Caption for the denominator behind `windowBreakdown`.
-    public var windowBreakdownLabel: String {
-        "\(buckets.count) \(window.title.lowercased()) buckets"
-    }
-
-    public var isEmpty: Bool {
-        grandTotal == 0 && headlineTotal == 0
     }
 
     /// Series ordered for display: descending by total, with "Other" last.
@@ -161,16 +159,6 @@ public struct SpendReport: Sendable {
         guard let priorComparableTotal, priorComparableTotal > 0 else { return nil }
         let current = headlineTotal.doubleValue
         return (current - priorComparableTotal.doubleValue) / priorComparableTotal.doubleValue
-    }
-
-    public var priorPeriodCaption: String? {
-        guard let priorPeriodTotal, priorPeriodTotal > 0 else { return nil }
-        return "Previous \(window.title.lowercased()) period: \(Money.precise(priorPeriodTotal))"
-    }
-
-    /// Label describing the headline figure, e.g. "this week so far".
-    public var headlineCaption: String {
-        window.headlineNoun
     }
 }
 
@@ -213,13 +201,18 @@ public enum SpendAggregator {
         }
 
         let grandTotal = fold.bucketTotals.reduce(0, +)
-        let reportedHeadline = fold.periodTotals[bucketing.window]
+        // A provider-reported period total describes a calendar period, so it can
+        // only stand in for a calendar headline. Rolling figures must come from
+        // slices that the app can clip at the boundary.
+        let reportedHeadline = bucketing.scope == .calendar ? fold.periodTotals[bucketing.window] : nil
         let headline = reportedHeadline ?? fold.headlineTotal
 
         return SpendReport(
             window: bucketing.window,
             calendar: bucketing.calendar,
+            scope: bucketing.scope,
             grouping: grouping,
+            headlineRange: bucketing.headlineRange,
             buckets: buckets,
             series: rankedSeries(from: fold.accumulator, limit: seriesLimit),
             grandTotal: grandTotal,

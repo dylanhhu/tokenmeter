@@ -37,6 +37,7 @@ Use it to check a layout change before handing work back. Flags:
 ./.build/debug/TokenMeter --snapshot out.png --measure tokens     # spend | tokens | requests
 ./.build/debug/TokenMeter --snapshot out.png --selected 9         # bucket index, oldest first
 ./.build/debug/TokenMeter --snapshot out.png --hover 9            # pin the chart tooltip
+./.build/debug/TokenMeter --snapshot out.png --scope trailing     # calendar | trailing
 ```
 
 ### Toolchain gotcha (read this first)
@@ -63,9 +64,10 @@ every view's local state for no benefit.
 
 ```
 Sources/TokenMeterKit/          # pure logic, unit-tested, no AppKit UI
-  Core/SpendWindow.swift        # windows, bucketing, time-zone handling
+  Core/SpendWindow.swift        # windows, scopes, bucketing, time-zone handling
   Core/SpendSlice.swift         # the provider → aggregator contract
   Core/Aggregation.swift        # slices → SpendReport (series, totals, deltas)
+  Core/SpendReport+Captions.swift # the wording of a period, shared by every figure
   Core/BreakdownRows.swift      # rows ranked by spend, tokens, or requests
   Core/BreakdownMeasure.swift   # which quantity the breakdown is measured by
   Core/TokenEfficiency.swift    # blended rates, output ratio, per-request costs
@@ -98,11 +100,18 @@ Break one of these and you have introduced a bug, even if it compiles.
    therefore smear across buckets.
 3. **Capabilities travel with the fetch.** They depend on the credential, not
    just the provider. `capabilities` is populated from `SpendFetchResult`, and
-   the UI gates window options and the breakdown control on it.
-4. **The headline figure is the in-progress period**, unless the provider reports
-   an authoritative period total (`periodTotals`), which then wins. For the
-   hourly window that period is the trailing 60 minutes (`headlineRange`), not
-   the clock hour to date, so it can span two chart buckets.
+   the UI gates window options and the breakdown control on it. Rolling support
+   is tracked separately (`rollingWindows`): a credential can fill a window from
+   coarse rows and still be unable to resolve a rolling boundary, in which case
+   the UI must not offer that reading.
+4. **The headline figure is the period the user chose**, unless the provider
+   reports an authoritative period total (`periodTotals`) and the scope is
+   calendar — a period total describes a calendar period and can never stand in
+   for a rolling one. `WindowScope` selects the period: the calendar period in
+   progress (today, this week) or one bucket's length ending now
+   (`last 24 hours`). A rolling headline starts
+   mid-bucket, so it can span two chart buckets, and providers must return rows
+   finer than the bucket around its two boundaries.
 5. **The breakdown shares the headline's denominator.** `currentBreakdown` ranks
    series by the in-progress period; `windowBreakdown` ranks by the whole window;
    `breakdown(for: .bucket(start))` ranks by one clicked bar. Never mix them — a
@@ -131,8 +140,10 @@ Break one of these and you have introduced a bug, even if it compiles.
     figures are the one exception: they cover the whole window and say so in their
     caption.
 11. **Provider results are cached; navigation is free.** `SpendResultCache` holds
-    one result per (provider, window, time zone) for the refresh interval, and
-    serves it only while it still spans the requested range. Opening the popover
+    one result per (provider, window, scope, time zone) for the refresh interval,
+    and serves it only while it still spans the requested range. Scope is part of
+    the key because a calendar result lacks the fine rows a rolling headline
+    needs. Opening the popover
     or switching windows must not query a vendor. Manual refresh and credential
     changes force a fetch; credential changes also invalidate the entry.
 

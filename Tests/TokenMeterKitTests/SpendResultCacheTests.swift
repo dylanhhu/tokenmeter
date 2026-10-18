@@ -16,10 +16,11 @@ struct SpendResultCacheTests {
 
     static func request(
         _ window: SpendWindow,
+        scope: WindowScope = .calendar,
         now: Date,
         zone: TimeZone = .gmt
     ) -> SpendRequest {
-        SpendRequest(bucketing: Bucketing(window: window, calendar: calendar(zone), now: now))
+        SpendRequest(bucketing: Bucketing(window: window, scope: scope, calendar: calendar(zone), now: now))
     }
 
     static func result() -> SpendFetchResult {
@@ -80,6 +81,23 @@ struct SpendResultCacheTests {
             for: SpendResultCache.Key(providerID: "openrouter", request: otherZone),
             request: otherZone
         ) == nil)
+    }
+
+    @Test("A calendar result is not served for a rolling headline")
+    func keysByScope() async {
+        // Both requests cover the same range, but only the rolling one contains
+        // the fine rows its headline needs, so they cannot share an entry.
+        let calendarRequest = Self.request(.daily, scope: .calendar, now: Self.date(12))
+        let rollingRequest = Self.request(.daily, scope: .trailing, now: Self.date(12))
+        #expect(calendarRequest.range == rollingRequest.range)
+
+        let cache = SpendResultCache(ttl: 600)
+        let calendarKey = SpendResultCache.Key(providerID: "openrouter", request: calendarRequest)
+        await cache.store(Self.result(), for: calendarKey, request: calendarRequest)
+
+        let rollingKey = SpendResultCache.Key(providerID: "openrouter", request: rollingRequest)
+        #expect(await cache.entry(for: rollingKey, request: rollingRequest) == nil)
+        #expect(await cache.entry(for: calendarKey, request: calendarRequest) != nil)
     }
 
     @Test("Invalidating one provider keeps the others")

@@ -61,28 +61,33 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
 
 ## How spend is computed
 
-- **Menu bar figure** is the in-progress period: the last 60 minutes, today,
-  this week, or this month. The hourly figure is a rolling hour, not the clock
-  hour to date — at 9:05 it covers 8:05–9:05, not five minutes of activity.
+- **Menu bar figure** covers the period you pick with the second control in the
+  popover. *This week* is the calendar week to date; *Last 7 days* is the seven
+  days ending now. The same pair applies to the hour, day, and month. A calendar
+  week on Wednesday is three days of spend, which is why the rolling reading is
+  there.
 - **Chart** shows the trailing history for that window — 24 hours, 14 days, 8
-  weeks, or 6 months — as a stacked bar chart. The rightmost bar is the clock
-  period still in progress, so it is naturally short; for the hourly window the
-  headline can span the last two bars.
+  weeks, or 6 months — as a stacked bar chart, always bucketed by calendar. The
+  rightmost bar is the period still in progress, so it is naturally short; a
+  rolling headline ends mid-bucket and can span the last two bars.
 - **Click a bar to break it down.** The breakdown below switches from the
-  in-progress period to that one bar, captioned with its interval and total;
+  headline period to that one bar, captioned with its interval and total;
   hovering shows the same interval without committing to it. Click the bar again
   (or the × on the caption) to return to the headline period.
 
   <img src="docs/screenshots/popover-selected.png" width="300" alt="The popover with one day selected: the chart fades the other bars, a tooltip names the day and its spend, and the breakdown lists that day's models">
 - **Percent change** compares against the *same elapsed duration* of the previous
-  period — for the hourly window, the 60 minutes before the trailing hour.
-  Comparing a partial Tuesday against a whole Monday would fabricate a large
-  drop every morning.
+  period, so a partial Tuesday is never weighed against a whole Monday. A rolling
+  headline is compared against the whole interval before it.
+- **Rolling figures are resolved at the boundary.** The app asks the provider for
+  rows finer than the bucket around each rolling boundary — minutes for hourly
+  and daily windows, hours for weekly and monthly — so the sum is not rounded to
+  a calendar bar. A credential that cannot produce finer rows (an OpenRouter
+  inference key, say) is not offered the rolling reading at all.
 - **Buckets follow your calendar.** OpenRouter reports UTC days; the app fetches
   hour-level rows and re-buckets into local time, so 11pm spend lands on the
-  correct day. The trailing hour is refetched at minute granularity, because its
-  boundary does not fall on a clock hour. Weekly and monthly windows use
-  day-level rows and can shift by a few hours at a boundary.
+  correct day. Weekly and monthly windows use day-level rows and can shift by a
+  few hours at a boundary.
 - **Amounts are USD**, summed as `Decimal` rather than `Double` so thousands of
   sub-cent charges do not drift.
 - **The breakdown can be measured by spend, tokens, or requests.** Tokens and

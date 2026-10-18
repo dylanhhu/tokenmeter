@@ -89,10 +89,16 @@ local hour boundary in every zone, since offsets are whole minutes), and
 weekly/monthly windows request day-level rows to keep row counts sane, accepting
 sub-day skew at the bucket boundary.
 
-The hourly headline is a trailing 60 minutes rather than the current clock hour,
-so its boundary generally falls inside an hour bucket. Those two clock hours are
-refetched at minute granularity and merged with the coarse history; the cut sits
-on a clock-hour boundary so the queries cannot double-count a partial bucket.
+The headline is not always bucket-aligned. `WindowScope.trailing` reports one
+bucket's length ending now — the last 60 minutes, 24 hours, 7 days, or as many
+days as the current month has — so its start and end generally fall inside a
+bucket. The aggregator only counts slices that *start* inside the headline, so a
+provider that can go finer refetches the coarse bucket each boundary falls in:
+a minute for hourly and daily windows, an hour for weekly and monthly ones.
+Segments are contiguous and half-open, so no bucket is dropped or counted twice,
+and the residual error is bounded by one fine bucket rather than one chart bar.
+A provider that cannot refine a window reports it in `rollingWindows` instead of
+`windows`, and the UI withholds that reading.
 
 `Bucketing` walks calendar components backwards rather than subtracting fixed
 durations, so a 23-hour or 25-hour DST day and variable-length months behave
@@ -108,14 +114,18 @@ displayed range maps to exactly one bucket.
   adapter name respectively, so totals always reconcile with what providers
   reported.
 - **Other** absorbs everything past `settings.seriesLimit`, preserving the sum.
-- **Headline** is the total inside `Bucketing.headlineRange`: the in-progress
-  bucket for daily/weekly/monthly, the trailing 60 minutes for hourly. It is
-  accumulated separately from the chart buckets, so it may span two bars. A
-  provider-reported period total (`periodTotals`) still takes precedence — an
-  inference key knows today's exact spend even though it cannot show history.
+- **Headline** is the total inside `Bucketing.headlineRange`: under
+  `.calendar` the in-progress bucket, under `.trailing` the equal-length interval
+  ending now. It is accumulated separately from the chart buckets, so it may span
+  two bars. A provider-reported period total (`periodTotals`) still takes
+  precedence under `.calendar` — an inference key knows today's exact spend even
+  though it cannot show history — but never under `.trailing`, where a calendar
+  total would be a different quantity wearing the same caption.
 - **Delta** compares against `priorHeadlineRange`, the equal-length interval
   immediately before the headline (`priorComparableTotal`). Comparing a partial
   day against a whole day would manufacture a misleading number on every refresh.
+  A rolling headline is compared against a whole prior interval, which the badge
+  caption states.
 - **Counters** travel with the same folds: every series carries prompt tokens,
   completion tokens, and requests both across the window and inside the headline
   interval, so token volume is attributed exactly as finely as spend.

@@ -32,24 +32,44 @@ public enum SpendWindow: String, CaseIterable, Codable, Sendable, Identifiable {
         }
     }
 
-    /// Describes the headline figure, e.g. "$1.24 **this week**".
+    /// Describes the headline figure when it covers the calendar period in
+    /// progress, e.g. "$1.24 **this week**".
     ///
-    /// The hourly window reports the trailing 60 minutes rather than the clock
-    /// hour to date: at 9:05, "this hour" would be five minutes of spend, which
-    /// is not what anyone means by the last hour.
+    /// Rolling periods are labelled by `headlineLabel(scope:duration:)`, which
+    /// knows how long the interval actually is.
     public var headlineNoun: String {
         switch self {
-        case .hourly: "last hour"
+        case .hourly: "this hour"
         case .daily: "today"
         case .weekly: "this week"
         case .monthly: "this month"
         }
     }
 
-    /// True when the headline covers a rolling interval ending at `now` instead
-    /// of the current calendar bucket.
-    public var headlinesTrailingPeriod: Bool {
-        self == .hourly
+    /// Noun for the headline period under a scope, e.g. "this week" or "last 7
+    /// days".
+    ///
+    /// Rolling labels are derived from the interval rather than the window name
+    /// because a rolling month is 28 to 31 days and a rolling day can be 23 or
+    /// 25 hours across a DST change; the caption has to match the sum.
+    public func headlineLabel(scope: WindowScope, duration: TimeInterval) -> String {
+        guard scope == .trailing else { return headlineNoun }
+        if self == .hourly {
+            return "last hour"
+        }
+        let hours = max(1, Int((duration / 3600).rounded()))
+        if hours < 48 {
+            return "last \(hours) hours"
+        }
+        return "last \(hours / 24) days"
+    }
+
+    /// Compact suffix for `MenuBarStyle.amountAndWindow`, e.g. `1W` for the
+    /// calendar week or `7D` for a rolling one.
+    public func shortTitle(scope: WindowScope, duration: TimeInterval) -> String {
+        guard scope == .trailing else { return shortTitle }
+        let hours = max(1, Int((duration / 3600).rounded()))
+        return hours < 48 ? "\(hours)H" : "\(hours / 24)D"
     }
 
     public var bucketComponent: Calendar.Component {
@@ -153,6 +173,31 @@ public enum SpendWindow: String, CaseIterable, Codable, Sendable, Identifiable {
     }
 }
 
+/// Which stretch of time the headline figure covers.
+///
+/// The chart always shows calendar buckets; only the headline, the breakdown's
+/// denominator, and the period-over-period delta follow this. A rolling headline
+/// ends mid-bucket, so it can span two bars.
+public enum WindowScope: String, CaseIterable, Codable, Sendable, Identifiable {
+    /// The calendar period in progress: today so far, this week so far.
+    case calendar
+    /// An interval of one bucket's length ending now: the last 24 hours.
+    case trailing
+
+    public var id: String {
+        rawValue
+    }
+
+    /// Name for the settings picker, where the window it applies to is a
+    /// separate control and the period nouns would repeat it.
+    public var title: String {
+        switch self {
+        case .calendar: "Period to date"
+        case .trailing: "Rolling"
+        }
+    }
+}
+
 /// How spend is attributed to chart series.
 public enum SpendGrouping: String, CaseIterable, Codable, Sendable, Identifiable {
     case model
@@ -214,6 +259,7 @@ public enum TimeZoneMode: String, CaseIterable, Codable, Sendable, Identifiable 
 /// coarser than one display bucket.
 public struct Bucketing: Sendable {
     public let window: SpendWindow
+    public let scope: WindowScope
     public let calendar: Calendar
     public let now: Date
     public let bucketCount: Int
@@ -231,9 +277,9 @@ public struct Bucketing: Sendable {
     public let fetchRange: DateInterval
     /// The interval the headline figure covers.
     ///
-    /// For calendar windows this is the in-progress bucket. For `.hourly` it is
-    /// the trailing 60 minutes, aligned to minute boundaries so a provider that
-    /// reports per-minute rows can sum it exactly.
+    /// Under `.calendar` this is the in-progress bucket. Under `.trailing` it is
+    /// one bucket's length ending at `now`, aligned to minute boundaries so a
+    /// provider that reports fine rows can sum it exactly.
     public let headlineRange: DateInterval
     /// The equal-length interval immediately before `headlineRange`, used for
     /// the period-over-period delta.
@@ -241,6 +287,7 @@ public struct Bucketing: Sendable {
 
     public init(
         window: SpendWindow,
+        scope: WindowScope = .calendar,
         timeZoneMode: TimeZoneMode = .local,
         now: Date = .now,
         bucketCount: Int? = nil,
@@ -248,6 +295,7 @@ public struct Bucketing: Sendable {
     ) {
         self.init(
             window: window,
+            scope: scope,
             calendar: timeZoneMode.calendar(now: now),
             now: now,
             bucketCount: bucketCount,
@@ -257,12 +305,14 @@ public struct Bucketing: Sendable {
 
     public init(
         window: SpendWindow,
+        scope: WindowScope = .calendar,
         calendar: Calendar,
         now: Date = .now,
         bucketCount: Int? = nil,
         includesPriorPeriod: Bool = true
     ) {
         self.window = window
+        self.scope = scope
         self.calendar = calendar
         self.now = now
         self.bucketCount = max(1, bucketCount ?? window.defaultBucketCount)
@@ -307,16 +357,18 @@ public struct Bucketing: Sendable {
         fetchRange = DateInterval(start: fetchStart, end: last)
 
         let current = buckets.last ?? DateInterval(start: currentStart, end: currentStart)
-        if window.headlinesTrailingPeriod {
-            // End on the next minute so the in-progress minute is included, and
-            // the 60 minute-buckets in the range line up with provider rows.
+        switch scope {
+        case .trailing:
+            // One bucket's length ending now. End on the next minute so the
+            // in-progress minute is included and the boundary lands on a provider
+            // row boundary; the chart buckets stay calendar-aligned.
             let end = Self.minuteCeiling(now)
-            let start = end.addingTimeInterval(-3600)
+            let start = end.addingTimeInterval(-max(1, current.duration))
             headlineRange = DateInterval(start: start, end: end)
             priorHeadlineRange = includesPriorPeriod
-                ? DateInterval(start: start.addingTimeInterval(-3600), end: start)
+                ? DateInterval(start: start.addingTimeInterval(-max(1, current.duration)), end: start)
                 : nil
-        } else {
+        case .calendar:
             headlineRange = current
             if let prior {
                 let elapsed = max(0, now.timeIntervalSince(current.start))

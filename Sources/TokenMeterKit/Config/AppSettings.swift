@@ -26,6 +26,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
     /// Window whose current-period total appears in the menu bar and whose
     /// buckets the chart displays.
     public var menuBarWindow: SpendWindow
+    /// Whether that window's headline is the calendar period in progress or a
+    /// rolling interval ending now.
+    public var windowScope: WindowScope
     public var grouping: SpendGrouping
     /// Quantity the breakdown list ranks and measures by. Persisted so a user who
     /// prefers thinking in tokens keeps that lens across launches.
@@ -43,6 +46,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
 
     public init(
         menuBarWindow: SpendWindow = .daily,
+        windowScope: WindowScope = .calendar,
         grouping: SpendGrouping = .model,
         breakdownMeasure: BreakdownMeasure = .spend,
         refreshInterval: TimeInterval = 300,
@@ -53,6 +57,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         launchAtLogin: Bool = false
     ) {
         self.menuBarWindow = menuBarWindow
+        self.windowScope = windowScope
         self.grouping = grouping
         self.breakdownMeasure = breakdownMeasure
         self.refreshInterval = refreshInterval
@@ -71,6 +76,11 @@ public struct AppSettings: Codable, Sendable, Equatable {
         let fallback = AppSettings.default
         let container = try decoder.container(keyedBy: CodingKeys.self)
         menuBarWindow = try container.decodeIfPresent(SpendWindow.self, forKey: .menuBarWindow) ?? fallback.menuBarWindow
+        // Before the scope existed the hourly window always reported the trailing
+        // 60 minutes. Keep that reading for settings files that predate the
+        // choice rather than silently turning "last hour" into five minutes.
+        windowScope = try container.decodeIfPresent(WindowScope.self, forKey: .windowScope)
+            ?? (menuBarWindow == .hourly ? .trailing : fallback.windowScope)
         grouping = try container.decodeIfPresent(SpendGrouping.self, forKey: .grouping) ?? fallback.grouping
         breakdownMeasure = try container.decodeIfPresent(BreakdownMeasure.self, forKey: .breakdownMeasure) ?? fallback.breakdownMeasure
         refreshInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? fallback.refreshInterval
@@ -84,6 +94,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     /// True when a change requires re-fetching from providers.
     public func requiresRefetch(comparedTo other: AppSettings) -> Bool {
         menuBarWindow != other.menuBarWindow
+            || windowScope != other.windowScope
             || timeZoneMode != other.timeZoneMode
             || enabledProviders != other.enabledProviders
     }

@@ -5,6 +5,8 @@ import TokenMeterKit
 /// Renders the popover offscreen to a PNG.
 ///
 ///     TokenMeter --snapshot <path> [--view popover|settings|empty]
+///                                  [--window hourly|daily|weekly|monthly]
+///                                  [--scope calendar|trailing]
 ///                                  [--appearance dark|light] [--width 372]
 ///                                  [--selected N] [--hover N]
 ///
@@ -26,6 +28,7 @@ enum Snapshot {
         let options = Options(
             view: value(for: "--view", in: arguments) ?? "popover",
             window: value(for: "--window", in: arguments) ?? "daily",
+            scope: value(for: "--scope", in: arguments) ?? "calendar",
             measure: value(for: "--measure", in: arguments) ?? "spend",
             selected: value(for: "--selected", in: arguments).flatMap(Int.init),
             hover: value(for: "--hover", in: arguments).flatMap(Int.init),
@@ -51,6 +54,7 @@ enum Snapshot {
     private struct Options {
         var view: String
         var window: String
+        var scope: String
         var measure: String
         var selected: Int?
         var hover: Int?
@@ -68,6 +72,7 @@ enum Snapshot {
             // `--view empty` renders the onboarding state instead.
             settings.enabledProviders = options.view == "empty" ? [] : [DemoProvider.providerID]
             settings.menuBarWindow = SpendWindow(rawValue: options.window) ?? .daily
+            settings.windowScope = WindowScope(rawValue: options.scope) ?? .calendar
             settings.breakdownMeasure = BreakdownMeasure(rawValue: options.measure) ?? .spend
         }
         if options.view != "empty" {

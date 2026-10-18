@@ -159,7 +159,7 @@ struct TokenMeasureTests {
         let now = try #require(
             calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 9, minute: 5))
         )
-        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: now)
+        let bucketing = Bucketing(window: .hourly, scope: .trailing, calendar: calendar, now: now)
 
         func minuteSlice(_ date: Date, tokens: (Int, Int), requests: Int) -> SpendSlice {
             SpendSlice(

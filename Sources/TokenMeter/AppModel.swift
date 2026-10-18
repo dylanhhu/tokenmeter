@@ -128,59 +128,6 @@ final class AppModel {
         }
     }
 
-    // MARK: - Derived state
-
-    /// Windows that at least one configured provider can fill.
-    var availableWindows: [SpendWindow] {
-        guard !settings.enabledProviders.isEmpty else { return SpendWindow.allCases }
-        var supported: Set<SpendWindow> = []
-        for id in settings.enabledProviders {
-            if let capability = capabilities[id] {
-                supported.formUnion(capability.windows)
-            } else {
-                // Unknown capabilities (first launch, failed probe): do not hide
-                // options the user may legitimately want.
-                supported.formUnion(SpendWindow.allCases)
-            }
-        }
-        return SpendWindow.allCases.filter { supported.contains($0) }
-    }
-
-    /// Whether per-model attribution is available from any provider.
-    var hasBreakdown: Bool {
-        report?.hasBreakdown ?? capabilities.values.contains(where: \.hasBreakdown)
-    }
-
-    var menuBarText: String {
-        guard let report else { return "—" }
-        let amount = Money.menuBar(report.headlineTotal)
-        switch settings.menuBarStyle {
-        case .amount, .iconAndAmount: return amount
-        case .amountAndWindow: return "\(amount) \(report.window.shortTitle)"
-        }
-    }
-
-    var menuBarTooltip: String {
-        guard let report else { return "TokenMeter — no data yet" }
-        return "\(Money.precise(report.headlineTotal)) \(report.headlineCaption)"
-    }
-
-    var descriptors: [ProviderDescriptor] {
-        ProviderCatalog.descriptors
-    }
-
-    var enabledDescriptors: [ProviderDescriptor] {
-        settings.enabledProviders.compactMap { ProviderCatalog.descriptor(for: $0) }
-    }
-
-    func capability(for id: ProviderID) -> ProviderCapabilities? {
-        capabilities[id]
-    }
-
-    func hasCredential(_ id: ProviderID) -> Bool {
-        connectedProviders.contains(id)
-    }
-
     // MARK: - Settings
 
     func updateSettings(_ transform: (inout AppSettings) -> Void) {
@@ -203,6 +150,23 @@ final class AppModel {
 
     func setWindow(_ window: SpendWindow) {
         updateSettings { $0.menuBarWindow = window }
+    }
+
+    func setScope(_ scope: WindowScope) {
+        updateSettings { $0.windowScope = scope }
+    }
+
+    /// Sentence-case label for a period choice, e.g. "This week" or "Last 7
+    /// days". The label states the interval the figure will cover, which is the
+    /// whole point of the control.
+    func periodLabel(for scope: WindowScope) -> String {
+        let bucketing = Bucketing(
+            window: settings.menuBarWindow,
+            scope: scope,
+            timeZoneMode: settings.timeZoneMode
+        )
+        let label = settings.menuBarWindow.headlineLabel(scope: scope, duration: bucketing.headlineRange.duration)
+        return label.prefix(1).uppercased() + label.dropFirst()
     }
 
     /// Awaits one refresh. Used by the snapshot renderer, which must not race
@@ -328,9 +292,10 @@ final class AppModel {
             return
         }
         let window = settings.menuBarWindow
+        let scope = settings.windowScope
         let timeZoneMode = settings.timeZoneMode
         let enabled = settings.enabledProviders
-        let bucketing = Bucketing(window: window, timeZoneMode: timeZoneMode)
+        let bucketing = Bucketing(window: window, scope: scope, timeZoneMode: timeZoneMode)
         let request = SpendRequest(bucketing: bucketing)
         let keychain = credentialStore
         let cached = credentialCache
@@ -357,7 +322,16 @@ final class AppModel {
     /// fill, e.g. when a usable credential turns out to be an inference key.
     private func coerceWindowIfUnsupported() {
         guard !isCoercingWindow else { return }
-        let available = availableWindows
+        // A rolling headline no provider can resolve is worse than no rolling
+        // option, so drop back to the calendar period before changing windows.
+        if settings.windowScope == .trailing, availableWindows(for: .trailing).isEmpty {
+            Log.app.notice("No provider can resolve a rolling headline; using the calendar period")
+            isCoercingWindow = true
+            updateSettings { $0.windowScope = .calendar }
+            isCoercingWindow = false
+            return
+        }
+        let available = availableWindows(for: settings.windowScope)
         guard !available.isEmpty, !available.contains(settings.menuBarWindow),
               let best = available.min(by: { $0.rank < $1.rank }) else { return }
         let requested = settings.menuBarWindow.rawValue
@@ -454,7 +428,11 @@ final class AppModel {
     }
 
     private func rebuildReport() {
-        let bucketing = Bucketing(window: settings.menuBarWindow, timeZoneMode: settings.timeZoneMode)
+        let bucketing = Bucketing(
+            window: settings.menuBarWindow,
+            scope: settings.windowScope,
+            timeZoneMode: settings.timeZoneMode
+        )
         let enabled = Set(settings.enabledProviders)
         let included = contributions.filter { enabled.contains($0.providerID) }
         if included.isEmpty {

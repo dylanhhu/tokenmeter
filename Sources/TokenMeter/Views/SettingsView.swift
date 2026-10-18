@@ -27,10 +27,15 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
-            Section("Menu Bar") {
+            Section {
                 Picker("Show spend for", selection: windowBinding) {
                     ForEach(SpendWindow.allCases) { window in
                         Text(window.title).tag(window)
+                    }
+                }
+                Picker("Covering", selection: scopeBinding) {
+                    ForEach(WindowScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
                     }
                 }
                 Picker("Label style", selection: styleBinding) {
@@ -53,6 +58,15 @@ struct SettingsView: View {
                         Text("\(limit)").tag(limit)
                     }
                 }
+            } header: {
+                Text("Menu Bar")
+            } footer: {
+                Text(
+                    "Period to date counts the day, week, or month in progress. "
+                        + "Rolling counts the same length of time ending now: the last 24 hours, 7 days, or 31 days."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section {
@@ -123,6 +137,13 @@ struct SettingsView: View {
         Binding(
             get: { model.settings.menuBarWindow },
             set: { value in model.updateSettings { $0.menuBarWindow = value } }
+        )
+    }
+
+    private var scopeBinding: Binding<WindowScope> {
+        Binding(
+            get: { model.settings.windowScope },
+            set: { value in model.updateSettings { $0.windowScope = value } }
         )
     }
 
@@ -338,7 +359,7 @@ private struct ProviderRow: View {
         test()
     }
 
-    private func test() {
+    func test() {
         isBusy = true
         let override = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
@@ -361,6 +382,14 @@ private struct ProviderRow: View {
             parts.append("All windows available")
         } else if !windows.isEmpty {
             parts.append("Windows: \(windows.map(\.title).joined(separator: ", "))")
+        }
+        // Rolling periods need finer rows than the window bucket, so a credential
+        // can fill a window and still not be able to report it rolling.
+        let rolling = windows.filter { capability.supports($0, scope: .trailing) }
+        if !windows.isEmpty, rolling.isEmpty {
+            parts.append("calendar periods only")
+        } else if rolling.count < windows.count {
+            parts.append("rolling: \(rolling.map(\.title).joined(separator: ", "))")
         }
         if capability.hasModelBreakdown {
             parts.append("per-model breakdown")

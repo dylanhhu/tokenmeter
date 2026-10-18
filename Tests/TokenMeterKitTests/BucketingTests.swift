@@ -120,11 +120,11 @@ struct BucketingTests {
         #expect(bucketing.bucketIndex(for: now) == 23)
     }
 
-    @Test("Hourly headline is the trailing 60 minutes, not the clock hour")
+    @Test("Rolling hourly headline is the trailing 60 minutes, not the clock hour")
     func hourlyHeadlineTrailsNow() throws {
         let calendar = Self.calendar()
         let now = Self.date(calendar, 2026, 3, 10, 14, 37)
-        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: now)
+        let bucketing = Bucketing(window: .hourly, scope: .trailing, calendar: calendar, now: now)
 
         // The endpoint is the next whole minute, so an in-progress minute is
         // included; on an exact minute boundary it is the completed hour.

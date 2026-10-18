@@ -50,6 +50,8 @@ public struct AcmeProvider: SpendProvider {
         let account = try await client.account()
         return ProviderCapabilities(
             windows: account.supportsHourly ? Set(SpendWindow.allCases) : [.daily, .weekly, .monthly],
+            // Rolling headlines need rows finer than the bucket they start in.
+            rollingWindows: account.supportsHourly ? Set(SpendWindow.allCases) : [],
             hasModelBreakdown: account.supportsModels,
             hasProviderBreakdown: false,
             nativeGranularity: account.supportsHourly ? .hourly : .daily,
@@ -118,11 +120,14 @@ public static func makeProvider(id: ProviderID, credential: String?) -> (any Spe
   `capabilities` and return nothing for it.
 - **Cover `request.range`.** It extends one full period before the visible range
   so the delta badge has a baseline.
-- **Refine `request.headlineRange` when you can.** The hourly headline is a
-  trailing 60 minutes, whose boundary is not a clock hour. If the vendor exposes
-  minute rows, fetch the clock hours that window touches at that resolution;
-  otherwise remove `.hourly` from `capabilities`, because hour rows cannot
-  resolve it.
+- **Refine `request.headlineRange` under `.trailing`.** A rolling headline starts
+  and ends mid-bucket; a calendar headline is a bucket and needs nothing extra.
+  Fetch the coarse bucket containing each boundary — the headline's and the
+  equal-length interval before it — at the finest granularity the vendor offers,
+  keeping the segments contiguous so no bucket comes back twice. If the vendor
+  cannot go finer than the window bucket, leave that window out of
+  `rollingWindows`; the app then hides the rolling option instead of showing the
+  calendar period under a rolling label.
 - **Leave attribution nil when unknown.** `model: "unknown"` becomes a real series
   named "unknown" and pollutes the legend; `nil` becomes "Unattributed".
 - **Prefer slices over `periodTotals`.** Only use `periodTotals` when the vendor
@@ -181,7 +186,10 @@ empty results.
 ## Checklist
 
 - [ ] Descriptor fields filled in, including `credentialURL`
-- [ ] `probe()` returns honest capabilities for the credential in use
+- [ ] `probe()` returns honest capabilities for the credential in use, including
+      `rollingWindows`
+- [ ] `queryPlan`-style boundary refinement, or the window left out of
+      `rollingWindows`
 - [ ] Adapter issues no requests when `fetchSpend` is called without a credential
 - [ ] Errors map onto `SpendProviderError` so the UI can phrase them
 - [ ] No credentials in logs

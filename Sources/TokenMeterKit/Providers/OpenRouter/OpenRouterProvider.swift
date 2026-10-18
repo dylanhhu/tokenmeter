@@ -99,7 +99,7 @@ public struct OpenRouterProvider: SpendProvider {
         schema: OpenRouterClient.Schema
     ) async throws -> SpendFetchResult {
         let dimensions = Self.dimensions(for: schema)
-        let granularity = Self.serverGranularity(for: request, schema: schema)
+        let granularity = Self.serverGranularity(for: request.window, schema: schema)
 
         var extraMetrics: [String] = []
         if let metric = schema.requestMetric {
@@ -116,19 +116,12 @@ public struct OpenRouterProvider: SpendProvider {
         var chunks: [(rows: [[String: Any]], granularity: String)] = []
         var truncated = false
 
-        // The coarse query covers everything before the trailing clock hours; the
-        // fine query covers those at minute resolution so the trailing-hour
-        // boundary can be resolved.
-        let split = Self.minuteRefinementStart(for: request, schema: schema)
-        let plan: [(range: DateInterval, granularity: String)] = if let split {
-            [
-                (DateInterval(start: request.range.start, end: split), granularity),
-                (DateInterval(start: split, end: request.range.end), "minute"),
-            ]
-        } else {
-            [(request.range, granularity)]
-        }
-        for step in plan where step.range.duration > 0 {
+        // Calendar headlines line up with the display buckets, so the whole range
+        // is fetched at one granularity. A rolling headline starts and ends
+        // mid-bucket, so the coarse bucket around each boundary is refetched
+        // finer.
+        let plan = Self.queryPlan(for: request, coarse: granularity, schema: schema)
+        for step in plan {
             let page = try await rows(
                 segments: Self.querySegments(for: step.range),
                 granularity: step.granularity,
@@ -138,14 +131,19 @@ public struct OpenRouterProvider: SpendProvider {
             )
             chunks.append((page.rows, step.granularity))
             truncated = truncated || page.truncated
-            if page.truncated, step.granularity == "minute" {
-                warnings.append("Minute detail for the last hour was truncated; the last-hour figure may be incomplete.")
+            if page.truncated, step.granularity != granularity {
+                warnings.append("Boundary detail was truncated; the headline figure may be incomplete.")
             }
         }
 
         // A truncated result loses whole time buckets, so prefer a coarser
-        // granularity over silently under-reporting.
-        if truncated, granularity == "hour", request.window != .hourly, schema.granularities.contains("day") {
+        // granularity over silently under-reporting. Not under a rolling
+        // headline: dropping to day rows would leave the boundary unresolvable
+        // and the total would quietly become the calendar period instead.
+        let canFallBackToDays = granularity == "hour"
+            && request.window != .hourly
+            && schema.granularities.contains("day")
+        if truncated, request.scope == .calendar, canFallBackToDays {
             let page = try await rows(
                 segments: Self.querySegments(for: request.range),
                 granularity: "day",
@@ -180,8 +178,9 @@ public struct OpenRouterProvider: SpendProvider {
         }
 
         var capabilities = Self.managementCapabilities(for: schema)
-        let finest = chunks.contains { $0.granularity == "minute" } ? "minute" : granularity
-        capabilities.nativeGranularity = finest == "hour" || finest == "minute" ? .hourly : .daily
+        capabilities.nativeGranularity = chunks
+            .compactMap { Self.window(forGranularity: $0.granularity) }
+            .min { $0.rank < $1.rank } ?? capabilities.nativeGranularity
 
         return SpendFetchResult(
             slices: slices,
@@ -189,24 +188,6 @@ public struct OpenRouterProvider: SpendProvider {
             periodTotals: [:],
             warnings: warnings
         )
-    }
-
-    /// Where the minute-resolution tail begins, or nil when the whole range can
-    /// be fetched coarse. Cutting on a UTC hour keeps the coarse query's last hour
-    /// bucket complete and stops the two queries from overlapping.
-    ///
-    /// The tail starts an hour before the headline so the prior hour the delta
-    /// compares against is resolved at the same granularity.
-    static func minuteRefinementStart(for request: SpendRequest, schema: OpenRouterClient.Schema) -> Date? {
-        guard request.window == .hourly,
-              schema.granularities.contains("minute"),
-              let headline = request.headlineRange
-        else { return nil }
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(identifier: "UTC") ?? .gmt
-        let priorStart = headline.start.addingTimeInterval(-3600)
-        guard let hourStart = utc.dateInterval(of: .hour, for: priorStart)?.start else { return nil }
-        return max(hourStart, request.range.start)
     }
 
     /// Runs one query per segment and concatenates the rows.
@@ -238,27 +219,6 @@ public struct OpenRouterProvider: SpendProvider {
             truncated = truncated || page.truncated
         }
         return (rows, truncated)
-    }
-
-    /// Splits a fetch range into segments the endpoint will accept.
-    ///
-    /// Cuts land on UTC midnights so a day-granularity bucket is rarely split
-    /// across two requests, which keeps per-segment rows complete.
-    static func querySegments(for range: DateInterval, maxDays: Int = maxDaysPerQuery) -> [DateInterval] {
-        let maxDuration = TimeInterval(max(maxDays, 1)) * 86_400
-        guard range.duration > maxDuration else { return [range] }
-
-        var segments: [DateInterval] = []
-        var cursor = range.start
-        while range.end.timeIntervalSince(cursor) > maxDuration {
-            let naive = cursor.addingTimeInterval(maxDuration)
-            let midnight = Date(timeIntervalSince1970: (naive.timeIntervalSince1970 / 86_400).rounded(.down) * 86_400)
-            let cut = midnight > cursor ? midnight : naive
-            segments.append(DateInterval(start: cursor, end: cut))
-            cursor = cut
-        }
-        segments.append(DateInterval(start: cursor, end: range.end))
-        return segments
     }
 
     /// Folds slices that describe the same (bucket, model, upstream provider)
@@ -431,6 +391,9 @@ public struct OpenRouterProvider: SpendProvider {
 
     static let inferenceKeyCapabilities = ProviderCapabilities(
         windows: [.daily, .weekly, .monthly],
+        // `/key` reports calendar period totals. Nothing in it can reconstruct a
+        // rolling 24 hours, so the app must not offer that reading.
+        rollingWindows: [],
         hasModelBreakdown: false,
         hasProviderBreakdown: false,
         nativeGranularity: .daily,
@@ -452,11 +415,22 @@ public struct OpenRouterProvider: SpendProvider {
         }
         return ProviderCapabilities(
             windows: windows,
+            rollingWindows: Set(windows.filter { supportsRolling($0, schema: schema) }),
             hasModelBreakdown: schema.dimensions.contains("model"),
             hasProviderBreakdown: schema.dimensions.contains("provider"),
             nativeGranularity: schema.granularities.contains("hour") ? .hourly : .daily,
             notes: []
         )
+    }
+
+    /// A rolling headline begins mid-bucket, so it can only be summed exactly if
+    /// the API can return rows finer than the bucket the boundary falls in.
+    static func supportsRolling(_ window: SpendWindow, schema: OpenRouterClient.Schema) -> Bool {
+        let coarse = serverGranularity(for: window, schema: schema)
+        // Week and month edges belong to the server, so a client cannot tell which
+        // one a boundary falls in and must not claim the reading.
+        guard coarse == "hour" || coarse == "day" else { return false }
+        return finerGranularity(than: coarse, in: schema.granularities) != nil
     }
 
     /// Prefers model and upstream provider. The query endpoint accepts at most
@@ -475,8 +449,8 @@ public struct OpenRouterProvider: SpendProvider {
     /// into the user's time zone: a UTC day boundary does not line up with a
     /// local day boundary. Weekly and monthly windows span far too many hours for
     /// that, so they use day resolution and accept a sub-day boundary skew.
-    static func serverGranularity(for request: SpendRequest, schema: OpenRouterClient.Schema) -> String {
-        switch request.window {
+    static func serverGranularity(for window: SpendWindow, schema: OpenRouterClient.Schema) -> String {
+        switch window {
         case .hourly, .daily:
             schema.granularities.contains("hour") ? "hour" : "day"
         case .weekly, .monthly:

@@ -7,7 +7,7 @@ struct HourlyTrailingTests {
     @Test("Headline sums the trailing 60 minutes across clock hours")
     func trailingHeadline() {
         let calendar = AggregationTests.calendar()
-        let bucketing = Bucketing(window: .hourly, calendar: calendar, now: AggregationTests.now()) // 12:00
+        let bucketing = Bucketing(window: .hourly, scope: .trailing, calendar: calendar, now: AggregationTests.now()) // 12:00
 
         func minuteSlice(
             _ hour: Int,
