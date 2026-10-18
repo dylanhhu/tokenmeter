@@ -19,7 +19,9 @@ struct SpendChart: View {
                 placeholder
             }
         }
-        .frame(height: 132)
+        // Flexible above the floor: when the breakdown is short, the popover's
+        // leftover height goes here instead of into empty space below the list.
+        .frame(minHeight: 156)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
     }

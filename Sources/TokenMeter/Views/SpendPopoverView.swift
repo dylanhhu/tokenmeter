@@ -11,6 +11,17 @@ struct SpendPopoverView: View {
 
     private let width: CGFloat = 372
 
+    private enum Layout {
+        /// Floor on the scrollable column's height. A provider that reports two or
+        /// three series would otherwise leave the popover little taller than its
+        /// own header; the slack goes to the chart rather than to dead space.
+        static let minContentHeight: CGFloat = 430
+
+        /// Ceiling on the same column, so a long breakdown scrolls instead of
+        /// growing the popover into the menu bar and the Dock.
+        static let maxContentHeight: CGFloat = 620
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -27,10 +38,11 @@ struct SpendPopoverView: View {
                         Divider().opacity(0.4)
                         breakdown(report)
                     }
+                    .frame(minHeight: Layout.minContentHeight, alignment: .top)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 }
-                .frame(maxHeight: 520)
+                .frame(maxHeight: Layout.maxContentHeight)
             } else {
                 emptyState
             }
