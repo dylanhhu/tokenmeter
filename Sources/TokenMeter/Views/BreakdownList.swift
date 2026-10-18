@@ -76,7 +76,7 @@ struct BreakdownList: View {
             parts.append("\(row.requests.groupedString) requests")
         }
         if let rate = row.costPerMillionTokens {
-            parts.append("\(Money.perMillion(rate)) blended")
+            parts.append("\(Money.perMillion(rate)) blended in + out")
         }
         if let detail = row.series.detail {
             parts.append(detail)

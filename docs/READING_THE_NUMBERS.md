@@ -66,7 +66,9 @@ rate = ─────────────────────── × 
          tokens in the window
 ```
 
-Shown as `$4.68/M`. Two caveats govern its interpretation:
+Shown as `$4.68/M` and labelled **blended in + out** in the app, so the rate
+is not mistaken for a per-side price or a list price. Hovering the block repeats
+the definition. Two caveats govern its interpretation:
 
 - **It is blended across input and output pricing.** Providers bill completion
   tokens several times higher than prompt tokens, so the blended rate is a
@@ -124,8 +126,13 @@ cheaper per call.
 ## The priciest-model line
 
 ```
-claude-sonnet-4.5 costs the most per token: $4.68/M, 4.2x blended
+Highest rate: claude-sonnet-4.5 $4.68/M, 4.2× blended $1.10/M
 ```
+
+The line names both sides of the comparison rather than calling a model "most
+expensive per token": the series' effective rate, and the window's blended rate
+the multiple is measured against. Both are averages of what was billed for
+prompt and completion tokens in this window, not published prices.
 
 Selection rule: highest blended rate among series holding at least 1% of the
 window's tokens, with "Other" excluded. The floor exists because a series with a

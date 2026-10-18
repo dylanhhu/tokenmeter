@@ -47,6 +47,11 @@ public struct TokenEfficiency: Sendable, Hashable {
             costPerMillionTokens.map(Money.perMillion)
         }
 
+        /// Spoken form of `costPerMillionTokensLabel`, for screen readers.
+        public var costPerMillionTokensSpoken: String? {
+            costPerMillionTokens.map { "\(Money.currency($0)) per million tokens" }
+        }
+
         public var tokensPerRequest: Double? {
             guard requests > 0 else { return nil }
             return Double(tokens) / Double(requests)
@@ -107,6 +112,12 @@ public struct TokenEfficiency: Sendable, Hashable {
         costPerMillionTokens.map(Money.perMillion)
     }
 
+    /// Spoken form of `costPerMillionTokensLabel`: screen readers pronounce
+    /// "/M" as "slash M", which is not a price anyone recognises.
+    public var costPerMillionTokensSpoken: String? {
+        costPerMillionTokens.map { "\(Money.currency($0)) per million tokens" }
+    }
+
     public var outputRatio: Double? {
         guard promptTokens > 0 else { return nil }
         return Double(completionTokens) / Double(promptTokens)
@@ -155,6 +166,44 @@ public struct TokenEfficiency: Sendable, Hashable {
                 (lhs.costPerMillionTokens ?? 0) < (rhs.costPerMillionTokens ?? 0)
             }
     }
+
+    /// The outlier line, phrased so both sides of the comparison are on screen:
+    /// the series' effective rate and the window average it is measured
+    /// against. "Most expensive per token" alone invites reading the figure as
+    /// a list price rather than an average of what was billed.
+    public var priciestNote: String? {
+        guard let row = priciest, let rate = row.costPerMillionTokensLabel else { return nil }
+        guard let multiple = row.rateMultiple, let blended = costPerMillionTokensLabel else {
+            return "Highest rate: \(row.label) \(rate)"
+        }
+        let factor = String(format: "%.1f", multiple)
+        return "Highest rate: \(row.label) \(rate), \(factor)× blended \(blended)"
+    }
+
+    /// Spoken form of `priciestNote`, for the accessibility label.
+    public var priciestNoteSpoken: String? {
+        guard let row = priciest, let rate = row.costPerMillionTokensSpoken else { return nil }
+        guard let multiple = row.rateMultiple, let blended = costPerMillionTokensSpoken else {
+            return "Highest rate: \(row.label) at \(rate)"
+        }
+        let factor = String(format: "%.1f", multiple)
+        return "Highest rate: \(row.label) at \(rate), \(factor) times the window's blended \(blended)"
+    }
+
+    /// Definition of the blended rate for tooltips and screen readers. It is an
+    /// average of what was billed across prompt and completion volume, not a
+    /// published price, so the copy has to say so.
+    public static let blendedRateDefinition =
+        "Window spend ÷ prompt + completion tokens × 1,000,000. "
+            + "Billed amounts, not list prices; completion tokens cost more, "
+            + "so a model that writes longer reads higher at the same price list."
+
+    /// Why this row was named, for the tooltip: the comparison is against the
+    /// window's blended rate, and the floor keeps rounding artefacts from a
+    /// handful of tokens out of the ranking.
+    public static let priciestRule =
+        "Highest effective rate among series holding at least 1% of the window's tokens. "
+            + "Effective rate = spend ÷ (prompt + completion tokens) × 1,000,000."
 }
 
 public extension SpendReport {

@@ -352,6 +352,31 @@ struct TokenEfficiencyTests {
         #expect(noisy.efficiency.priciest?.label == "model-b")
     }
 
+    @Test("The outlier note states both rates it compares")
+    func priciestNoteCopy() throws {
+        let efficiency = Self.report().efficiency
+        let row = try #require(efficiency.rows.first { $0.label == "model-b" })
+        let note = try #require(efficiency.priciestNote)
+        let rowRate = try #require(row.costPerMillionTokensLabel)
+        let blended = try #require(efficiency.costPerMillionTokensLabel)
+        let multiple = try #require(row.rateMultiple)
+
+        #expect(note.contains(row.label))
+        #expect(note.contains(rowRate))
+        #expect(note.contains(blended))
+        #expect(note.contains(String(format: "%.1f×", multiple)))
+        #expect(note.hasPrefix("Highest rate"))
+        // "per token" without a denominator reads as a list price; the copy has
+        // to keep the billed-average framing visible.
+        #expect(!note.contains("most per token"))
+
+        // Screen readers should not hear "/M".
+        let spoken = try #require(efficiency.priciestNoteSpoken)
+        #expect(!spoken.contains("/M"))
+        #expect(spoken.contains("per million tokens"))
+        #expect(spoken.contains("times the window's blended"))
+    }
+
     @Test("A single series has no meaningful outlier to report")
     func singleSeriesHasNoOutlier() {
         var calendar = Calendar(identifier: .gregorian)

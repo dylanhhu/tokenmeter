@@ -2,8 +2,8 @@ import SwiftUI
 import TokenMeterKit
 
 /// Window-wide token economics: what a million tokens costs, how much of each
-/// request is prompt versus answer, and which model charges the most for the
-/// tokens it delivers.
+/// request is prompt versus answer, and which model carries the highest
+/// effective rate against the window average.
 ///
 /// Everything here covers the whole displayed window, so the caption says so;
 /// these figures deliberately do not track the in-progress headline.
@@ -27,7 +27,7 @@ struct TokenEfficiencyView: View {
 
             VStack(spacing: 3) {
                 HStack(spacing: 10) {
-                    stat(efficiency.costPerMillionTokensLabel, "blended")
+                    stat(efficiency.costPerMillionTokensLabel, "blended in + out")
                     stat(efficiency.outputRatioValueLabel, "out : in")
                 }
                 HStack(spacing: 10) {
@@ -35,9 +35,10 @@ struct TokenEfficiencyView: View {
                     stat(efficiency.costPerRequestLabel, "per req")
                 }
             }
+            .help(TokenEfficiency.blendedRateDefinition)
 
-            if let priciest = efficiency.priciest, let rate = priciest.costPerMillionTokensLabel {
-                priciestNote(priciest, rate: rate)
+            if let note = efficiency.priciestNote {
+                priciestNote(note)
             }
         }
         .accessibilityElement(children: .combine)
@@ -55,29 +56,23 @@ struct TokenEfficiencyView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func priciestNote(_ row: TokenEfficiency.Row, rate: String) -> some View {
+    private func priciestNote(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 4) {
             Image(systemName: "arrow.up.right")
                 .font(.system(size: 8, weight: .bold))
                 .padding(.top, 1)
-            Text(noteText(row, rate: rate))
+            Text(text)
                 .font(.system(size: 9))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(.secondary)
-    }
-
-    private func noteText(_ row: TokenEfficiency.Row, rate: String) -> String {
-        guard let multiple = row.rateMultiple else {
-            return "\(row.label) costs the most per token, \(rate)"
-        }
-        return "\(row.label) costs the most per token: \(rate), \(String(format: "%.1f", multiple))x blended"
+        .help(TokenEfficiency.priciestRule)
     }
 
     private var accessibilitySummary: String {
         var parts: [String] = []
-        if let rate = efficiency.costPerMillionTokensLabel {
-            parts.append("Blended rate \(rate)")
+        if let rate = efficiency.costPerMillionTokensSpoken {
+            parts.append("Blended rate \(rate) across prompt and completion tokens")
         }
         if let ratio = efficiency.outputRatioLabel {
             parts.append(ratio)
@@ -88,6 +83,10 @@ struct TokenEfficiencyView: View {
         if let cost = efficiency.costPerRequestLabel {
             parts.append("\(cost) per request")
         }
-        return "Token efficiency, \(caption). \(parts.joined(separator: ", "))."
+        var summary = "Token efficiency, \(caption). \(parts.joined(separator: ", "))."
+        if let note = efficiency.priciestNoteSpoken {
+            summary += " \(note)."
+        }
+        return summary
     }
 }
