@@ -1,0 +1,37 @@
+# SwiftFormat configuration — https://github.com/nicklockwood/SwiftFormat
+# Run `make format` to apply, `make lint` to check.
+
+--swiftversion 6.0
+--minversion 0.55
+
+# Layout
+--indent 4
+--indentcase false
+--maxwidth 140
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--closingparen balanced
+--trimwhitespace always
+
+# Imports and modifiers
+--importgrouping alpha
+--stripunusedargs closure-only
+
+# Redundancy
+--redundanttype inferred
+--shortoptionals always
+
+# Prefer modern syntax
+--commas inline
+--linebreaks lf
+
+# Disabled: rules that fight deliberate readability choices in this codebase
+--disable numberFormatting
+# SwiftLint's trailing_comma rule is authoritative for comma placement.
+--disable trailingCommas
+--disable wrapSingleLineComments
+--disable docComments
+--disable enumNamespaces
+
+--exclude .build,build,.swiftpm
