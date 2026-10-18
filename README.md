@@ -1,5 +1,10 @@
 # TokenMeter
 
+> [!WARNING]
+> This app was totally vibecoded. There are no guarantees of stability,
+> security, correctness, or fitness for any purpose. It works on my machine.
+> Read the source before you trust it with a real API key.
+
 A macOS menu bar app that shows what your LLM API usage costs — the current hour,
 day, week, or month — and breaks it down by model and provider when the API
 exposes that. The same breakdown can be measured in tokens or requests, so spend
