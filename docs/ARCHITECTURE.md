@@ -185,6 +185,20 @@ How to read the resulting figures, and where each one misleads, is in
   and credential changes bypass or invalidate it
 - coerces the selected window when capabilities no longer support it
 
+## Testing
+
+Development is test-first. The money path — bucketing, aggregation, deltas,
+conversion of vendor rows into slices — is exactly the kind of code where a bug
+is invisible until it has been billing for a week, so the expected number is
+written down in a test before the code that produces it. Tests assert on values
+(`Decimal` amounts, bucket boundaries, token counts) rather than snapshots,
+because a golden image will happily approve a wrong total.
+
+This is also why the pure logic lives in `TokenMeterKit` with no AppKit or
+SwiftUI import: a behaviour that can be tested without a window is a behaviour
+that can be driven red-to-green. When something seems untestable, it usually
+belongs one tier lower.
+
 ## Storage
 
 | What | Where | Why |

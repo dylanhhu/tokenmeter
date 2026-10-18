@@ -129,8 +129,9 @@ make check      # lint + tests
 make run        # build and launch
 ```
 
-Read [AGENTS.md](AGENTS.md) before contributing; it lists the invariants that keep
-the numbers honest. Design rationale is in
+Read [AGENTS.md](AGENTS.md) before contributing; it lists the test-first workflow
+and the invariants that keep the numbers honest. Changes to logic start with a
+failing test. Design rationale is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and
 [docs/ADDING_A_PROVIDER.md](docs/ADDING_A_PROVIDER.md) walks through the provider
 interface.

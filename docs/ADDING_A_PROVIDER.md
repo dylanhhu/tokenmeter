@@ -152,6 +152,13 @@ Also check for truncation flags on paginated responses and surface them via
 
 ## Tests
 
+Start here, before writing the mapper. Record a response from the vendor (or
+reuse one from its docs), reduce it to the fields you read, and write the fixture
+test first. Stub `slices(from:)` so the suite compiles and returns nothing, watch
+the test fail on the assertion, then implement the mapper. The fixture is the
+specification for the row mapping; tests written afterwards tend to assert
+whatever the parser happens to do with the real data.
+
 Add fixture-driven tests next to the existing ones:
 
 ```swift
@@ -179,5 +186,6 @@ empty results.
 - [ ] Errors map onto `SpendProviderError` so the UI can phrase them
 - [ ] No credentials in logs
 - [ ] Registered in `ProviderCatalog` with a `makeProvider` case
-- [ ] Fixture tests for the row mapper
+- [ ] Fixture tests for the row mapper were written before the mapper and
+      failed first
 - [ ] `make check` passes

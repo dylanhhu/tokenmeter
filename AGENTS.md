@@ -14,7 +14,8 @@ Providers are pluggable adapters; OpenRouter is the reference implementation.
 
 ```bash
 make build      # debug build
-make test       # swift-testing suite (84 tests, no network)
+make test       # swift-testing suite (no network; count on last line)
+swift test --filter BucketingTests.bucketPartition   # one test, for the red/green loop
 make lint       # swiftformat --lint + swiftlint --strict (no writes)
 make format     # apply formatting fixes
 make check      # lint + test — run before every commit
@@ -148,7 +149,39 @@ Nothing in `Sources/TokenMeter/` needs to change. If you find yourself editing a
 view to support a new vendor, the abstraction has been violated — fix that
 instead.
 
-## Testing expectations
+## Test-driven development
+
+This repository is developed test-first. Write the failing test before the
+implementation, watch it fail for the reason you expect, then write the minimum
+code that makes it pass and refactor. A pull request whose tests were written
+after the implementation is not ready, even when the tests pass: tests written
+against finished code encode what the code does rather than what it must do.
+
+The loop, concretely:
+
+1. Write one test expressing the next piece of behaviour. Put it next to the
+   tests for that tier — aggregation, bucketing, parsing, caching — not in a
+   catch-all file.
+2. Run `swift test --filter <Suite>.<test>` and confirm it fails on the
+   assertion, not on a compile error or a missing fixture. A test that cannot
+   compile has not failed yet.
+3. Implement the smallest change that makes it pass. No speculative generality,
+   no unrelated API surface added along the way.
+4. Run `make check` after the green step. Refactor only while green, then rerun.
+5. Repeat for the next behaviour. Do not batch several behaviours behind one
+   test; a failing assertion should name one expectation.
+
+Where test-first does not apply: view layout, copy, docs, and other
+non-observable presentation changes. Those are verified with `make snapshot` or
+by inspection. Logic that a view calls belongs in `TokenMeterKit` precisely so it
+can be driven test-first. If you cannot write a test for a behaviour, that is
+often a sign the logic sits in the wrong tier — move it down.
+
+Regression fixes start with a test that reproduces the bug and fails on the
+current code. State the failure in the commit message body; the test that
+previously would have caught it is part of the fix.
+
+### Testing expectations
 
 - New aggregation or bucketing logic needs tests; these are where silent money
   bugs live.
@@ -157,6 +190,8 @@ instead.
 - Tests must not touch the network, the Keychain, or `~/Library`. Use
   `SettingsStore(fileURL:)` with a temporary directory.
 - Snapshot/golden tests are not used; prefer assertions on values.
+- Prefer boundary cases over story-shaped tests: equal elapsed durations across
+  DST, an empty provider set, a slice landing exactly on a bucket edge.
 
 ## Style
 
@@ -173,6 +208,8 @@ instead.
 - Conventional-ish subjects: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`. One logical change per commit.
 - `make check` must pass before you push; CI runs the same commands.
+- A commit that adds behaviour includes the failing test written first in the
+  same commit (or an earlier one), not a follow-up `test:` commit.
 - Never commit `.build/`, `build/`, secrets, or a `settings.json` from your own
   machine.
 
@@ -189,7 +226,9 @@ instead.
 ## Definition of done
 
 - [ ] `make check` passes
-- [ ] New behaviour has tests
+- [ ] New behaviour was written test-first: the test failed before the
+      implementation existed
+- [ ] Bug fixes include a test that reproduced the bug
 - [ ] Doc comments on any new public API
 - [ ] Capability gating considered for every new provider or window
 - [ ] No new force-unwraps, `try!`, or `as!` in `Sources/`
