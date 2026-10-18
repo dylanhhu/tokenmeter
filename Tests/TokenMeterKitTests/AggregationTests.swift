@@ -404,3 +404,56 @@ struct BreakdownRowsTests {
         #expect(report.currentPeriodTotal == 0)
     }
 }
+
+@Suite("Period-scoped counters")
+struct PeriodCounterTests {
+    @Test("Token and request counts reported alongside the headline cover the in-progress period only")
+    func currentPeriodCounters() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12)))
+        let bucketing = Bucketing(window: .daily, calendar: calendar, now: now)
+
+        func slice(bucket: Int, tokens: (Int, Int), requests: Int) -> SpendSlice {
+            let interval = bucketing.displayBuckets[bucket]
+            return SpendSlice(
+                start: interval.start,
+                end: interval.end,
+                providerID: "openrouter",
+                providerName: "OpenRouter",
+                model: "openai/gpt-5.1",
+                upstreamProvider: "OpenAI",
+                amount: 1,
+                promptTokens: tokens.0,
+                completionTokens: tokens.1,
+                requests: requests
+            )
+        }
+
+        let report = SpendAggregator.makeReport(
+            contributions: [
+                .init(
+                    providerID: "openrouter",
+                    result: SpendFetchResult(
+                        slices: [
+                            slice(bucket: 12, tokens: (900, 100), requests: 9),
+                            slice(bucket: 13, tokens: (40, 10), requests: 2),
+                        ],
+                        capabilities: ProviderCapabilities(hasModelBreakdown: true)
+                    )
+                ),
+            ],
+            bucketing: bucketing,
+            grouping: .model
+        )
+
+        // Window-wide totals remain available for other uses.
+        #expect(report.totalTokens == 1050)
+        #expect(report.requests == 11)
+        // But the headline row must describe today, not the whole window.
+        #expect(report.currentTokens == 50)
+        #expect(report.currentPromptTokens == 40)
+        #expect(report.currentRequests == 2)
+        #expect(report.currentPeriodTotal == 1)
+    }
+}

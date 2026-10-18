@@ -95,7 +95,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 660)
-        .onAppear { NSApp.activate(ignoringOtherApps: true) }
+        .onAppear {
+            NSApp.activate(ignoringOtherApps: true)
+            // The user may have toggled the login item in System Settings.
+            let actual = LaunchAtLogin.isEnabled
+            if actual != model.settings.launchAtLogin {
+                model.updateSettings { $0.launchAtLogin = actual }
+            }
+        }
     }
 
     private static var version: String {

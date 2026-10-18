@@ -20,11 +20,12 @@ enum Snapshot {
         let path = arguments[flagIndex + 1]
         let appearanceName = value(for: "--appearance", in: arguments) ?? "dark"
         let view = value(for: "--view", in: arguments) ?? "popover"
+        let window = value(for: "--window", in: arguments) ?? "daily"
         let width = value(for: "--width", in: arguments).flatMap(Double.init) ?? 372
 
         Task { @MainActor in
             do {
-                try await render(to: path, view: view, appearance: appearanceName, width: width)
+                try await render(to: path, view: view, window: window, appearance: appearanceName, width: width)
                 FileHandle.standardOutput.write(Data("Wrote snapshot to \(path)\n".utf8))
                 NSApp.terminate(nil)
             } catch {
@@ -36,7 +37,13 @@ enum Snapshot {
     }
 
     @MainActor
-    private static func render(to path: String, view: String, appearance: String, width: Double) async throws {
+    private static func render(
+        to path: String,
+        view: String,
+        window: String,
+        appearance: String,
+        width: Double
+    ) async throws {
         // Isolated store: nothing is written to the real settings file.
         let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = SettingsStore(fileURL: temporaryDirectory.appendingPathComponent("snapshot.json"))
@@ -44,7 +51,7 @@ enum Snapshot {
         model.updateSettings { settings in
             // `--view empty` renders the onboarding state instead.
             settings.enabledProviders = view == "empty" ? [] : [DemoProvider.providerID]
-            settings.menuBarWindow = .daily
+            settings.menuBarWindow = SpendWindow(rawValue: window) ?? .daily
         }
         if view != "empty" {
             await model.refreshForSnapshot()

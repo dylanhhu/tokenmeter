@@ -14,7 +14,7 @@ Providers are pluggable adapters; OpenRouter is the reference implementation.
 
 ```bash
 make build      # debug build
-make test       # swift-testing suite (46 tests, no network)
+make test       # swift-testing suite (50 tests, no network)
 make lint       # swiftformat --lint + swiftlint --strict (no writes)
 make format     # apply formatting fixes
 make check      # lint + test — run before every commit

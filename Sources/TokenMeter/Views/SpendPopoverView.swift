@@ -103,11 +103,11 @@ struct SpendPopoverView: View {
             }
 
             HStack(spacing: 10) {
-                if report.totalTokens > 0 {
-                    metric("tokens", report.totalTokens.compactTokens)
+                if report.currentTokens > 0 {
+                    metric("tokens", report.currentTokens.compactTokens)
                 }
-                if report.requests > 0 {
-                    metric("requests", report.requests.compactTokens)
+                if report.currentRequests > 0 {
+                    metric("requests", report.currentRequests.compactTokens)
                 }
                 if !report.hasBreakdown, report.headlineTotal > 0 {
                     metric("breakdown", "unavailable")

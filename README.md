@@ -58,7 +58,8 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
 - **Menu bar figure** is the in-progress period: this hour, today, this week, this
   month.
 - **Chart** shows the trailing history for that window — 24 hours, 14 days, 8
-  weeks, or 6 months — as a stacked bar chart.
+  weeks, or 6 months — as a stacked bar chart. The rightmost bar is the period
+  still in progress, so it is naturally short.
 - **Percent change** compares against the *same elapsed duration* of the previous
   period. Comparing a partial Tuesday against a whole Monday would fabricate a
   large drop every morning.

@@ -66,9 +66,14 @@ public struct SpendReport: Sendable {
     /// in-progress period. Comparing a partial period against a whole one would
     /// overstate every improvement, so deltas use this figure instead.
     public var priorComparableTotal: Decimal?
+    /// Tokens and requests across every displayed bucket.
     public var promptTokens: Int
     public var completionTokens: Int
     public var requests: Int
+    /// Tokens and requests for the in-progress period, matching the headline.
+    public var currentPromptTokens: Int
+    public var currentCompletionTokens: Int
+    public var currentRequests: Int
     /// True when at least one contributor could attribute spend to a model.
     public var hasBreakdown: Bool
     public var capabilities: [ProviderID: ProviderCapabilities]
@@ -89,6 +94,9 @@ public struct SpendReport: Sendable {
             promptTokens: 0,
             completionTokens: 0,
             requests: 0,
+            currentPromptTokens: 0,
+            currentCompletionTokens: 0,
+            currentRequests: 0,
             hasBreakdown: false,
             capabilities: [:],
             warnings: [],
@@ -98,6 +106,12 @@ public struct SpendReport: Sendable {
 
     public var totalTokens: Int {
         promptTokens + completionTokens
+    }
+
+    /// Token count for the in-progress period, so the figure sits under the same
+    /// denominator as the headline.
+    public var currentTokens: Int {
+        currentPromptTokens + currentCompletionTokens
     }
 
     /// Total for the in-progress bucket. This is what the breakdown explains, so
@@ -246,6 +260,9 @@ public enum SpendAggregator {
             promptTokens: fold.promptTokens,
             completionTokens: fold.completionTokens,
             requests: fold.requests,
+            currentPromptTokens: fold.bucketPromptTokens.last ?? 0,
+            currentCompletionTokens: fold.bucketCompletionTokens.last ?? 0,
+            currentRequests: fold.bucketRequests.last ?? 0,
             hasBreakdown: fold.hasBreakdown,
             capabilities: fold.capabilities,
             warnings: fold.warnings,
@@ -268,6 +285,9 @@ public enum SpendAggregator {
         var promptTokens = 0
         var completionTokens = 0
         var requests = 0
+        var bucketPromptTokens: [Int]
+        var bucketCompletionTokens: [Int]
+        var bucketRequests: [Int]
     }
 
     private static func fold(
@@ -275,12 +295,16 @@ public enum SpendAggregator {
         bucketing: Bucketing,
         grouping: SpendGrouping
     ) -> Fold {
+        let bucketCount = bucketing.displayBuckets.count
         var fold = Fold(
-            bucketTotals: [Decimal](repeating: 0, count: bucketing.displayBuckets.count),
+            bucketTotals: [Decimal](repeating: 0, count: bucketCount),
             accumulator: [:],
             periodTotals: [:],
             capabilities: [:],
-            warnings: []
+            warnings: [],
+            bucketPromptTokens: [Int](repeating: 0, count: bucketCount),
+            bucketCompletionTokens: [Int](repeating: 0, count: bucketCount),
+            bucketRequests: [Int](repeating: 0, count: bucketCount)
         )
 
         // Elapsed time into the in-progress bucket, used to truncate the prior
@@ -323,6 +347,9 @@ public enum SpendAggregator {
         fold.promptTokens += slice.promptTokens
         fold.completionTokens += slice.completionTokens
         fold.requests += slice.requests
+        fold.bucketPromptTokens[index] += slice.promptTokens
+        fold.bucketCompletionTokens[index] += slice.completionTokens
+        fold.bucketRequests[index] += slice.requests
 
         let key = seriesKey(for: slice, grouping: grouping)
         var entry = fold.accumulator[key] ?? SeriesAccumulator(
@@ -441,45 +468,6 @@ public enum SpendAggregator {
             return vendor
         case .provider:
             return nil
-        }
-    }
-}
-
-/// Models arrive as slugs like `anthropic/claude-sonnet-4.5` or
-/// `google/gemini-2.5-flash-preview-09-2025`. These helpers turn them into
-/// something legible in a narrow list.
-public enum ModelLabel {
-    public static func shortName(for slug: String) -> String {
-        guard let last = slug.split(separator: "/").last else { return slug }
-        return String(last)
-    }
-
-    public static func vendor(for slug: String) -> String {
-        guard let first = slug.split(separator: "/").first, slug.contains("/") else {
-            return "Unknown vendor"
-        }
-        return prettyCase(String(first))
-    }
-
-    static func prettyCase(_ raw: String) -> String {
-        switch raw.lowercased() {
-        case "openai": "OpenAI"
-        case "anthropic": "Anthropic"
-        case "google": "Google"
-        case "meta-llama": "Meta"
-        case "mistralai": "Mistral"
-        case "x-ai", "xai": "xAI"
-        case "deepseek": "DeepSeek"
-        case "qwen": "Qwen"
-        case "moonshotai": "Moonshot"
-        case "cohere": "Cohere"
-        case "amazon": "Amazon"
-        case "nvidia": "NVIDIA"
-        case "microsoft": "Microsoft"
-        case "perplexity": "Perplexity"
-        case "openrouter": "OpenRouter"
-        default:
-            raw.prefix(1).uppercased() + raw.dropFirst()
         }
     }
 }
