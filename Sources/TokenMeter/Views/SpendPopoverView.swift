@@ -80,6 +80,7 @@ struct SpendPopoverView: View {
             footer
         }
         .frame(width: width)
+        .anchoredWhileOpen()
         .onAppear { model.refreshIfStale() }
     }
 

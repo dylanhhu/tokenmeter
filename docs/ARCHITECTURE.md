@@ -27,6 +27,25 @@ graph TD
 `TokenMeterKit` holds everything below the popover and knows nothing about
 SwiftUI. It is a normal SwiftPM library and is tested directly.
 
+## The drop-down window
+
+`MenuBarExtra` places its window under the status item and re-places it whenever
+either frame changes. Vertical movement is prevented at the source: the content
+height is a constant, so the window has no reason to grow or shrink (see State
+and failure handling). Horizontal movement cannot be prevented that way. Menu bar
+items are laid out from the right, so any change in width shifts an item's
+origin, and the label carries the live spend figure: a refresh that widens it —
+"$8.40" becoming "$12.10" — slides the item along the bar and drags the open
+popover with it, mid-read.
+
+`anchoredWhileOpen()` pins the window's horizontal origin for as long as it is on
+screen, undoing any move that arrives more than a quarter second after the window
+was ordered in (moves inside that window are its own placement). The vertical
+origin is left alone so the pin cannot fight a legitimate resize. Visibility
+drives the pin rather than key status: key also flips when the settings window
+takes focus, and AppKit posts no ordered-on/off-screen notification to observe
+instead.
+
 ## The provider seam
 
 ```swift
