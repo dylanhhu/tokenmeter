@@ -5,7 +5,15 @@ import TokenMeterKit
 /// Stacked bar chart of spend per bucket, one stack segment per series.
 struct SpendChart: View {
     let report: SpendReport
-    let bucketing: Bucketing
+
+    /// Axis configuration comes from the report's own window, not from
+    /// separately held settings state. A window switch refreshes in the
+    /// background, so the previous report lingers until new data lands;
+    /// pairing it with the newly selected window's scale is what made
+    /// the chart jump before the update arrived.
+    private var window: SpendWindow {
+        report.window
+    }
 
     private var hasValues: Bool {
         report.series.contains { series in series.amounts.contains { $0 > 0 } }
@@ -52,8 +60,8 @@ struct SpendChart: View {
     }
 
     private func labelledBuckets(in buckets: [AxisBucket]) -> [AxisBucket] {
-        bucketing.window
-            .axisLabelIndices(bucketCount: buckets.count, tickCount: bucketing.window.axisTickCount)
+        window
+            .axisLabelIndices(bucketCount: buckets.count, tickCount: window.axisTickCount)
             .map { buckets[$0] }
     }
 
@@ -82,7 +90,7 @@ struct SpendChart: View {
             AxisMarks(values: labelledBuckets(in: buckets).map(\.key)) { value in
                 AxisValueLabel {
                     if let key = value.as(String.self), let bucket = buckets.first(where: { $0.key == key }) {
-                        Text(bucket.start.formatted(bucketing.window.axisFormat))
+                        Text(bucket.start.formatted(window.axisFormat))
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
@@ -121,6 +129,6 @@ struct SpendChart: View {
 
     private var accessibilitySummary: String {
         let parts = report.orderedSeries.prefix(4).map { "\($0.label) \(Money.compact($0.total))" }
-        return "\(bucketing.window.title) spend chart. \(parts.joined(separator: ", "))."
+        return "\(window.title) spend chart. \(parts.joined(separator: ", "))."
     }
 }

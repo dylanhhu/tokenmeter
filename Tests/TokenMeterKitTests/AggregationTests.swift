@@ -67,6 +67,30 @@ struct AggregationTests {
         #expect(report.buckets.last?.isCurrent == true)
     }
 
+    @Test("Report is self-describing: window and buckets match the bucketing")
+    func reportDescribesItsOwnWindow() {
+        // Views derive axis configuration from `report.window` alone, so
+        // the report must always carry the window it was aggregated for.
+        // A chart rendered from a stale report against a newly selected
+        // window's scale is what produced mid-refresh glitches.
+        for window in SpendWindow.allCases {
+            let bucketing = Bucketing(window: window, calendar: Self.calendar(), now: Self.now())
+            let result = SpendFetchResult(
+                slices: [Self.slice(bucketing, bucketIndex: 0, amount: "1.00")],
+                capabilities: Self.capabilities()
+            )
+            let report = SpendAggregator.makeReport(
+                contributions: [.init(providerID: "openrouter", result: result)],
+                bucketing: bucketing,
+                grouping: .model
+            )
+
+            #expect(report.window == window)
+            #expect(report.buckets.count == bucketing.bucketCount)
+            #expect(report.buckets.first?.start == bucketing.displayBuckets.first?.start)
+        }
+    }
+
     @Test("Provider-reported period totals win over bucket sums")
     func providerReportedTotals() throws {
         let bucketing = Bucketing(window: .daily, calendar: Self.calendar(), now: Self.now())
