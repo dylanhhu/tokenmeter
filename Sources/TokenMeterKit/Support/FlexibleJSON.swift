@@ -48,12 +48,19 @@ public enum FlexibleJSON {
         }
     }
 
-    /// Finds the first key matching a time-bucket column. Analytics rows name the
-    /// bucket column after the data source, e.g. `date__day` or
-    /// `created_at__hour`, so the prefix cannot be hard-coded.
+    private static let timeColumnPrefixes = [
+        "date__", "created_at__", "timestamp__", "hour__", "day__", "week__", "month__", "minute__",
+    ]
+    private static let timeColumnTokens = ["date", "time", "bucket", "start", "minute", "hour", "day", "week", "month"]
+
+    /// Finds the key holding the time bucket. Analytics rows name that column
+    /// after whichever rollup answered the query — `date__hour` from the hourly
+    /// view, `date__minute` from the minute view, `created_at__day` from the
+    /// daily one — and the set of rollups changes without notice. Matching a
+    /// fixed list of names is therefore not enough on its own, so the scan falls
+    /// back to any column that holds a timestamp.
     public static func timeBucket(in row: [String: Any]) -> (key: String, value: Any?)? {
-        let candidates = ["date__", "created_at__", "timestamp__", "hour__", "day__", "week__", "month__"]
-        for prefix in candidates {
+        for prefix in timeColumnPrefixes {
             if let match = row.first(where: { $0.key.hasPrefix(prefix) }) {
                 return (match.key, match.value)
             }
@@ -61,7 +68,35 @@ public enum FlexibleJSON {
         for key in ["date", "created_at", "timestamp", "bucket"] where row[key] != nil {
             return (key, row[key])
         }
+        let ordered = row.sorted { $0.key < $1.key }
+        if let named = ordered.first(where: { entry in
+            timeColumnTokens.contains { entry.key.lowercased().contains($0) } && isTimestamp(entry.value)
+        }) {
+            return (named.key, named.value)
+        }
+        if let date = ordered.first(where: { isTimestamp($0.value) }) {
+            return (date.key, date.value)
+        }
         return nil
+    }
+
+    /// Whether a column value could plausibly be a bucket boundary.
+    ///
+    /// Metric columns are numbers too, so an unqualified "does this parse" test
+    /// would happily read `total_usage: 0.5` as 1970-01-01T00:00:00.5Z. Epoch
+    /// magnitudes below 1e9 seconds predate 2001 and are never bucket boundaries.
+    public static func isTimestamp(_ value: Any?) -> Bool {
+        switch value {
+        case let text as String:
+            return FlexibleDate.parseISO8601(text) != nil
+        case let number as NSNumber where !(value is Bool):
+            return abs(number.doubleValue) >= 1_000_000_000
+        case let fields as [Any]:
+            guard let date = FlexibleDate.parse(fields) else { return false }
+            return date.timeIntervalSince1970 >= 1_000_000_000
+        default:
+            return false
+        }
     }
 
     private static func isPlausible(_ value: Double) -> Bool {
@@ -84,18 +119,59 @@ public enum FlexibleDate {
         if let date = value as? Date {
             return date
         }
+        // Bucket columns come back as epoch numbers as often as ISO strings, so a
+        // numeric value is not evidence that the row has no timestamp.
+        if let number = value as? NSNumber, !(value is Bool) {
+            return Date(timeIntervalSince1970: epochSeconds(number.doubleValue))
+        }
+        if let fields = value as? [Any], let components = dateComponents(from: fields) {
+            return utc.date(from: components)
+        }
         guard let raw = FlexibleJSON.string(value) else { return nil }
-        return parseISO8601(raw)
+        if let parsed = parseISO8601(raw) {
+            return parsed
+        }
+        return Double(raw.trimmingCharacters(in: .whitespaces)).map { Date(timeIntervalSince1970: epochSeconds($0)) }
+    }
+
+    /// Reads `[year, month, day, hour, minute, second]` arrays, which some rollups
+    /// return in place of a formatted timestamp.
+    private static func dateComponents(from values: [Any]) -> DateComponents? {
+        guard values.count >= 3,
+              let year = FlexibleJSON.int(values[0]),
+              let month = FlexibleJSON.int(values[1]),
+              let day = FlexibleJSON.int(values[2]) else { return nil }
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = values.count > 3 ? FlexibleJSON.int(values[3]) ?? 0 : 0
+        components.minute = values.count > 4 ? FlexibleJSON.int(values[4]) ?? 0 : 0
+        components.second = values.count > 5 ? FlexibleJSON.int(values[5]) ?? 0 : 0
+        return components
+    }
+
+    /// Normalises an epoch to seconds, accepting the second, millisecond,
+    /// microsecond, and nanosecond resolutions that database columns emit.
+    private static func epochSeconds(_ value: Double) -> Double {
+        switch abs(value) {
+        case 100_000_000_000_000_000...: value / 1_000_000_000
+        case 100_000_000_000_000...: value / 1_000_000
+        case 100_000_000_000...: value / 1_000
+        default: value
+        }
     }
 
     /// Accepts `yyyy-MM-dd`, `yyyy-MM-ddTHH:mm`, `yyyy-MM-ddTHH:mm:ss`, with an
-    /// optional fractional part and trailing `Z`.
+    /// optional fractional part and trailing `Z`. A space between the date and
+    /// time is legal too: that is how ClickHouse renders `DateTime`.
     public static func parseISO8601(_ raw: String) -> Date? {
         var text = raw.trimmingCharacters(in: .whitespaces)
         if text.hasSuffix("Z") || text.hasSuffix("z") {
             text.removeLast()
         }
-        let parts = text.split(separator: "T", maxSplits: 1, omittingEmptySubsequences: false)
+        let normalized = text.replacingOccurrences(of: "T", with: " ")
+        let parts = normalized.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
         guard let datePart = parts.first else { return nil }
 
         let dateNumbers = datePart.split(separator: "-").map { Int($0) }

@@ -44,12 +44,39 @@ struct SupportTests {
         #expect(FlexibleDate.parse(nil) == nil)
     }
 
+    @Test("Bucket timestamps parse from epoch numbers and ClickHouse spacing")
+    func numericDateParsing() {
+        let expected = Date(timeIntervalSince1970: 1_770_768_000) // 2026-02-11T00:00:00Z
+
+        // The analytics endpoint returns `created_at__hour` as an epoch number.
+        #expect(FlexibleDate.parse(1_770_768_000) == expected)
+        #expect(FlexibleDate.parse(1_770_768_000_000) == expected)
+        #expect(FlexibleDate.parse("1770768000") == expected)
+        #expect(FlexibleDate.parse("2026-02-11 00:00:00") == expected)
+        #expect(FlexibleDate.parse([2026, 2, 11]) == expected)
+        #expect(FlexibleDate.parse(false) == nil)
+    }
+
     @Test("Outgoing timestamps include seconds, as the API requires")
     func dateFormatting() {
         let date = Date(timeIntervalSince1970: 1_770_768_000)
         let text = FlexibleDate.iso8601(date)
         #expect(text == "2026-02-11T00:00:00Z")
         #expect(FlexibleDate.parse(text) == date)
+    }
+
+    @Test("The time column is found whatever the rollup named it")
+    func timeBucketDiscovery() {
+        let numeric = FlexibleJSON.timeBucket(in: ["created_at__hour": 1_770_768_000, "total_usage": 0.5])
+        #expect(numeric?.key == "created_at__hour")
+
+        let renamed = FlexibleJSON.timeBucket(in: ["bucket_start": "2026-02-11T00:00:00Z", "total_usage": 0.5])
+        #expect(renamed?.key == "bucket_start")
+
+        let unknownRollup = FlexibleJSON.timeBucket(in: ["rollup__fortnight": "2026-02-11T00:00:00Z"])
+        #expect(unknownRollup?.key == "rollup__fortnight")
+
+        #expect(FlexibleJSON.timeBucket(in: ["total_usage": 0.5]) == nil)
     }
 
     @Test("Numeric coercion accepts numbers, strings, and nulls")
