@@ -155,6 +155,20 @@ struct BucketingTests {
         }
     }
 
+    @Test("Axis labels are evenly spread and pin both ends of the chart")
+    func axisLabelIndices() {
+        // Fourteen daily buckets, five labels: both ends labelled, no crowding.
+        #expect(SpendWindow.daily.axisLabelIndices(bucketCount: 14, tickCount: 5) == [0, 3, 7, 10, 13])
+        // One label per bucket when the axis has room for them all.
+        #expect(SpendWindow.monthly.axisLabelIndices(bucketCount: 6, tickCount: 6) == [0, 1, 2, 3, 4, 5])
+        // Never fewer than the two ends, however small the tick budget.
+        #expect(SpendWindow.hourly.axisLabelIndices(bucketCount: 24, tickCount: 1) == [0, 23])
+        // Degenerate charts still label every bar they have.
+        #expect(SpendWindow.daily.axisLabelIndices(bucketCount: 1, tickCount: 5) == [0])
+        #expect(SpendWindow.daily.axisLabelIndices(bucketCount: 2, tickCount: 5) == [0, 1])
+        #expect(SpendWindow.daily.axisLabelIndices(bucketCount: 0, tickCount: 5).isEmpty)
+    }
+
     @Test("Any instant lands in exactly one bucket")
     func partition() throws {
         let calendar = Self.calendar()

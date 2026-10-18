@@ -77,6 +77,29 @@ public enum SpendWindow: String, CaseIterable, Codable, Sendable, Identifiable {
         self
     }
 
+    /// Indices of the chart buckets that should carry an axis label. Labels are
+    /// spread evenly and always include the first and last bucket, so the start
+    /// of the range and the in-progress bucket the headline reports stay
+    /// legible without crowding the axis.
+    ///
+    /// - Parameters:
+    ///   - bucketCount: how many buckets the chart is drawing.
+    ///   - tickCount: the most labels the axis should carry.
+    public func axisLabelIndices(bucketCount: Int, tickCount: Int) -> [Int] {
+        guard bucketCount > 2 else { return Array(0 ..< max(0, bucketCount)) }
+        let labelCount = min(bucketCount, max(2, tickCount))
+        let last = bucketCount - 1
+        var indices: [Int] = []
+        indices.reserveCapacity(labelCount)
+        for step in 0 ..< labelCount {
+            let index = Int((Double(step) * Double(last) / Double(labelCount - 1)).rounded())
+            if indices.last != index {
+                indices.append(index)
+            }
+        }
+        return indices
+    }
+
     public func bucketLabel(for start: Date, calendar: Calendar) -> String {
         switch self {
         case .hourly:

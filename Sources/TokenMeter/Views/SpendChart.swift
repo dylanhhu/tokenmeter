@@ -26,13 +26,45 @@ struct SpendChart: View {
         .accessibilityLabel(accessibilitySummary)
     }
 
+    /// One x-axis category per bucket.
+    ///
+    /// Buckets are plotted as categorical bands rather than as date bins: a
+    /// date-bin mark is anchored to the leading edge of its bin, so an axis
+    /// label sitting on the bucket start hangs off the left side of the bar. A
+    /// band centres both the bar and its label.
+    ///
+    /// The category is a key derived from the start rather than the start
+    /// itself, because `Date` is a continuous value to Charts and continuous
+    /// axes neither stack marks nor honour a relative bar width. The key is also
+    /// unique even when two buckets format to the same label, as an hourly
+    /// window spanning midnight does.
+    private struct AxisBucket: Hashable {
+        let start: Date
+        let isCurrent: Bool
+
+        var key: String {
+            "\(start.timeIntervalSinceReferenceDate)"
+        }
+    }
+
+    private var axisBuckets: [AxisBucket] {
+        report.buckets.map { AxisBucket(start: $0.start, isCurrent: $0.isCurrent) }
+    }
+
+    private func labelledBuckets(in buckets: [AxisBucket]) -> [AxisBucket] {
+        bucketing.window
+            .axisLabelIndices(bucketCount: buckets.count, tickCount: bucketing.window.axisTickCount)
+            .map { buckets[$0] }
+    }
+
     private var chart: some View {
-        Chart {
+        let buckets = axisBuckets
+        return Chart {
             ForEach(Array(report.orderedSeries.enumerated()), id: \.element.id) { index, series in
-                ForEach(Array(report.buckets.enumerated()), id: \.element.id) { bucketIndex, bucket in
+                ForEach(Array(buckets.enumerated()), id: \.element) { bucketIndex, bucket in
                     let amount = series.amounts.indices.contains(bucketIndex) ? series.amounts[bucketIndex] : 0
                     BarMark(
-                        x: .value("Time", bucket.start, unit: bucketing.window.bucketComponent),
+                        x: .value("Time", bucket.key),
                         y: .value("Spend", amount.doubleValue),
                         width: .ratio(0.62)
                     )
@@ -42,11 +74,19 @@ struct SpendChart: View {
                 }
             }
         }
+        // Room either side so the outermost labels are not clipped by the plot
+        // edge now that they are centred on the last band rather than hanging
+        // off its leading edge.
+        .chartXScale(range: .plotDimension(startPadding: 12, endPadding: 12))
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: bucketing.window.axisTickCount)) { _ in
-                AxisValueLabel(format: bucketing.window.axisFormat)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+            AxisMarks(values: labelledBuckets(in: buckets).map(\.key)) { value in
+                AxisValueLabel {
+                    if let key = value.as(String.self), let bucket = buckets.first(where: { $0.key == key }) {
+                        Text(bucket.start.formatted(bucketing.window.axisFormat))
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .chartYAxis {
