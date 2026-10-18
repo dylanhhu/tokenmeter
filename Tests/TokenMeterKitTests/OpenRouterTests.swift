@@ -202,6 +202,14 @@ struct OpenRouterTests {
         #expect(result.capabilities.supports(.hourly) == false)
     }
 
+    @Test("Analytics row limit stays inside the endpoint's accepted range")
+    func rowLimitWithinAPICeiling() {
+        // OpenRouter rejects a query whose `limit` exceeds 10,000 with
+        // "Request rejected: limit: too big", which surfaces as a banner.
+        #expect(OpenRouterProvider.rowLimit <= 10_000)
+        #expect(OpenRouterProvider.rowLimit > 0)
+    }
+
     @Test("Key info decodes OpenRouter's snake_case payload")
     func keyInfoDecoding() throws {
         let json = """

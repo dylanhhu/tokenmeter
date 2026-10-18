@@ -29,9 +29,14 @@ public struct OpenRouterProvider: SpendProvider {
         """
     )
 
-    /// Ceiling on returned analytics rows. Personal usage sits far below this;
-    /// if it is ever hit, the response is flagged truncated and we retry coarser.
-    private static let rowLimit = 20_000
+    /// Ceiling on returned analytics rows.
+    ///
+    /// The analytics endpoint rejects a `limit` above 10,000 with a validation
+    /// error ("limit: too big"), so this must not exceed the documented maximum.
+    /// The server raises the effective limit on its own for time-series queries
+    /// that carry dimensions, so a time bucket is never dropped for lack of
+    /// rows; if a response still comes back flagged truncated we retry coarser.
+    static let rowLimit = 10_000
 
     private let apiKey: String
     private let client: OpenRouterClient
