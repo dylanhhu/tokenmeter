@@ -6,6 +6,11 @@ import TokenMeterKit
 ///
 ///     TokenMeter --snapshot <path> [--view popover|settings|empty]
 ///                                  [--appearance dark|light] [--width 372]
+///                                  [--selected N] [--hover N]
+///
+/// `--selected` and `--hover` take a bucket index, oldest first, so the
+/// click-through breakdown and the chart tooltip can be inspected without a
+/// pointer.
 ///
 /// This exists so the interface can be inspected without a display, screen
 /// recording permission, or clicking the menu bar item — useful for pull request
@@ -22,6 +27,8 @@ enum Snapshot {
             view: value(for: "--view", in: arguments) ?? "popover",
             window: value(for: "--window", in: arguments) ?? "daily",
             measure: value(for: "--measure", in: arguments) ?? "spend",
+            selected: value(for: "--selected", in: arguments).flatMap(Int.init),
+            hover: value(for: "--hover", in: arguments).flatMap(Int.init),
             appearance: value(for: "--appearance", in: arguments) ?? "dark",
             width: value(for: "--width", in: arguments).flatMap(Double.init) ?? 372
         )
@@ -45,6 +52,8 @@ enum Snapshot {
         var view: String
         var window: String
         var measure: String
+        var selected: Int?
+        var hover: Int?
         var appearance: String
         var width: Double
     }
@@ -67,10 +76,14 @@ enum Snapshot {
 
         // The real popover draws on a window material; offscreen there is no
         // backdrop, so paint one or dark-appearance text is white on nothing.
+        let selectedBucket = options.selected.flatMap { index -> Date? in
+            guard let report = model.report, report.buckets.indices.contains(index) else { return nil }
+            return report.buckets[index].start
+        }
         let content = if options.view == "settings" {
             AnyView(SettingsView(model: model))
         } else {
-            AnyView(SpendPopoverView(model: model))
+            AnyView(SpendPopoverView(model: model, initialSelection: selectedBucket, initialHoverIndex: options.hover))
         }
         let effectiveWidth = options.view == "settings" ? max(options.width, 560) : options.width
         let root = ZStack {

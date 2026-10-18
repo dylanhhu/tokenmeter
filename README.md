@@ -68,6 +68,12 @@ Want to see the interface before adding a key? Enable **Sample data** in Setting
   weeks, or 6 months — as a stacked bar chart. The rightmost bar is the clock
   period still in progress, so it is naturally short; for the hourly window the
   headline can span the last two bars.
+- **Click a bar to break it down.** The breakdown below switches from the
+  in-progress period to that one bar, captioned with its interval and total;
+  hovering shows the same interval without committing to it. Click the bar again
+  (or the × on the caption) to return to the headline period.
+
+  <img src="docs/screenshots/popover-selected.png" width="300" alt="The popover with one day selected: the chart fades the other bars, a tooltip names the day and its spend, and the breakdown lists that day's models">
 - **Percent change** compares against the *same elapsed duration* of the previous
   period — for the hourly window, the 60 minutes before the trailing hour.
   Comparing a partial Tuesday against a whole Monday would fabricate a large

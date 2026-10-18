@@ -80,9 +80,10 @@ struct TokenMeasureTests {
     @Test("Token rows share the headline's denominator, not the window's")
     func currentTokenBreakdown() {
         let report = Self.report()
+        let current = report.totals(for: .current)
         #expect(report.currentTokens == 350)
-        #expect(report.denominator(for: .tokens, current: true) == 350)
-        #expect(report.denominator(for: .spend, current: true) == 4)
+        #expect(report.denominator(for: .tokens, in: current) == 350)
+        #expect(report.denominator(for: .spend, in: current) == 4)
 
         let rows = report.currentBreakdown(measure: .tokens)
         // Ranked by today's tokens, which reverses the spend ranking.

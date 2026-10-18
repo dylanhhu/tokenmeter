@@ -35,6 +35,8 @@ Use it to check a layout change before handing work back. Flags:
 ./.build/debug/TokenMeter --snapshot out.png --appearance light   # or dark
 ./.build/debug/TokenMeter --snapshot out.png --view settings      # popover | settings | empty
 ./.build/debug/TokenMeter --snapshot out.png --measure tokens     # spend | tokens | requests
+./.build/debug/TokenMeter --snapshot out.png --selected 9         # bucket index, oldest first
+./.build/debug/TokenMeter --snapshot out.png --hover 9            # pin the chart tooltip
 ```
 
 ### Toolchain gotcha (read this first)
@@ -102,10 +104,12 @@ Break one of these and you have introduced a bug, even if it compiles.
    hourly window that period is the trailing 60 minutes (`headlineRange`), not
    the clock hour to date, so it can span two chart buckets.
 5. **The breakdown shares the headline's denominator.** `currentBreakdown` ranks
-   series by the in-progress period; `windowBreakdown` ranks by the whole window.
-   Never mix the two — a "$45" row under a "$9.50 today" headline is a bug report
-   waiting to happen. Colours come from `colorIndex` (window rank), not list
-   position, so a series keeps its chart colour when the list is re-sorted.
+   series by the in-progress period; `windowBreakdown` ranks by the whole window;
+   `breakdown(for: .bucket(start))` ranks by one clicked bar. Never mix them — a
+   "$45" row under a "$9.50 today" headline is a bug report waiting to happen,
+   and a selected bar must be captioned with its own interval and total. Colours
+   come from `colorIndex` (window rank), not list position, so a series keeps its
+   chart colour when the list is re-sorted.
 6. **Period-over-period deltas compare equal elapsed durations.** Never divide a
    partial period by a whole one; that is how you publish a fake 90% saving. See
    `priorComparableTotal`.
@@ -122,8 +126,10 @@ Break one of these and you have introduced a bug, even if it compiles.
 10. **Every measure shares the headline's denominator.** Switching the breakdown
     to tokens or requests re-ranks the same rows against that period's tokens or
     requests, never the window's. `BreakdownRow` carries all three shares for the
-    same period so the divergence stays visible. Efficiency figures are the one
-    exception: they cover the whole window and say so in their caption.
+    same period so the divergence stays visible, and `Series.perBucket` carries
+    per-bar counters so a selected bar can be re-measured the same way. Efficiency
+    figures are the one exception: they cover the whole window and say so in their
+    caption.
 11. **Provider results are cached; navigation is free.** `SpendResultCache` holds
     one result per (provider, window, time zone) for the refresh interval, and
     serves it only while it still spans the requested range. Opening the popover

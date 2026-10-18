@@ -68,6 +68,7 @@ snapshot: build
 	@mkdir -p docs/screenshots
 	./.build/debug/$(APP_NAME) --snapshot docs/screenshots/popover-dark.png --appearance dark
 	./.build/debug/$(APP_NAME) --snapshot docs/screenshots/popover-light.png --appearance light
+	./.build/debug/$(APP_NAME) --snapshot docs/screenshots/popover-selected.png --appearance dark --selected 9 --hover 9
 	./.build/debug/$(APP_NAME) --snapshot docs/screenshots/onboarding.png --view empty --appearance dark
 	./.build/debug/$(APP_NAME) --snapshot docs/screenshots/settings.png --view settings --appearance light
 

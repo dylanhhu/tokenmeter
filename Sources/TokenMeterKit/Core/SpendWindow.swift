@@ -110,6 +110,35 @@ public enum SpendWindow: String, CaseIterable, Codable, Sendable, Identifiable {
         return indices
     }
 
+    /// Human label for one bucket's interval, e.g. `Tue, 2:00 – 3:00 PM` for an
+    /// hour or `Aug 5 – 11` for a week.
+    ///
+    /// Bucket ends are exclusive, so calendar buckets are pulled back a second
+    /// before formatting: otherwise a single day reads as "Aug 12 – 13". The
+    /// hourly label keeps its end, because a bar labelled 2:00 – 3:00 is the
+    /// hour between those two instants.
+    public func bucketRangeLabel(
+        start: Date,
+        end: Date,
+        calendar: Calendar,
+        locale: Locale = .current
+    ) -> String {
+        let formatter = DateIntervalFormatter()
+        formatter.locale = locale
+        formatter.timeZone = calendar.timeZone
+        switch self {
+        case .hourly:
+            formatter.dateTemplate = "EEEj:mm"
+            return formatter.string(from: start, to: max(start, end))
+        case .daily, .weekly:
+            formatter.dateTemplate = "MMMd"
+            return formatter.string(from: start, to: max(start, end.addingTimeInterval(-1)))
+        case .monthly:
+            formatter.dateTemplate = "yMMMM"
+            return formatter.string(from: start, to: max(start, end.addingTimeInterval(-1)))
+        }
+    }
+
     public func bucketLabel(for start: Date, calendar: Calendar) -> String {
         switch self {
         case .hourly:

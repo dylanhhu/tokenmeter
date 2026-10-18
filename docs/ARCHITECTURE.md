@@ -133,13 +133,23 @@ ranks and plots:
 | `tokens` | `currentTokens` | how much of the work was this |
 | `requests` | `currentRequests` | how many calls was this |
 
-`currentBreakdown(measure:)` and `windowBreakdown(measure:)` share one
-implementation. The denominator rule from invariant 5 extends to every measure:
-a token row under "$9.50 today" describes today's tokens, never the window's.
-Every row also carries the fixed `spendShare`, `tokenShare`, and `requestShare`
-for its period, so a token-ranked row can state the share of the bill it
-represents. That pair — 47% of tokens, 14% of spend — is the point of the
-feature; a single percentage of either kind would hide it.
+`currentBreakdown(measure:)` and `windowBreakdown(measure:)` are two cases of
+`breakdown(for:measure:)`, which takes a `BreakdownPeriod`: the headline
+interval, the whole window, or one clicked bucket. The denominator rule from
+invariant 5 extends to every measure: a token row under "$9.50 today" describes
+today's tokens, never the window's. Every row also carries the fixed
+`spendShare`, `tokenShare`, and `requestShare` for its period, so a token-ranked
+row can state the share of the bill it represents. That pair — 47% of tokens,
+14% of spend — is the point of the feature; a single percentage of either kind
+would hide it.
+
+A single bucket is the third period, and it is deliberately not a special case
+of "current": clicking the Oct 4 bar must describe Oct 4, not today. Its
+denominator is the bar itself (`Bucket.total` plus the summed per-bucket
+counters), rows with nothing in that slice are dropped, and colours still come
+from the window ranking so a series keeps its hue. Because `Series` carries
+`perBucket` values rather than just amounts, switching the measure on a selected
+bar re-ranks that bar's tokens and requests without re-fetching anything.
 
 `TokenEfficiency` adds window-wide readings: blended cost per million tokens,
 completion-to-prompt ratio, tokens and cost per request, and an effective rate
@@ -149,7 +159,8 @@ Efficiency deliberately covers the **whole window**, not the headline period.
 A partial hour rarely holds enough tokens for a blended rate or an output ratio
 to mean anything, and a figure that lurches on every refresh teaches nothing. The
 caption ("last 14 days") states the span so the block is never mistaken for the
-headline's period.
+headline's period. It is hidden while a bar is selected, since window-wide
+efficiency would contradict a single-slice reading.
 
 Two guards keep the derived figures honest:
 
@@ -177,6 +188,11 @@ How to read the resulting figures, and where each one misleads, is in
   window suffix) from the report rather than from settings. Pairing a
   stale report with the newly selected window's scale is what made the
   chart jump mid-refresh.
+- fixes the popover's content height rather than measuring it. `MenuBarExtra`
+  re-anchors its window whenever the content's height changes, so a measured
+  height made the drop-down jump as data arrived, a provider issue appeared, or a
+  selected slice added its caption. The chart absorbs the slack when the
+  breakdown is short; a long list scrolls instead of growing the window.
 - refreshes on a timer, on wake, on wall-clock change, and when the popover opens
   (only if the data is stale)
 - serves the popover and window switching from `SpendResultCache`, which keeps one

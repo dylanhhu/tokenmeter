@@ -2,18 +2,6 @@ import Foundation
 
 /// A fully aggregated view of spend for one window, ready to render.
 public struct SpendReport: Sendable {
-    public struct Bucket: Sendable, Identifiable, Hashable {
-        public var start: Date
-        public var end: Date
-        public var total: Decimal
-
-        public var id: Date {
-            start
-        }
-
-        public var isCurrent = false
-    }
-
     public struct Series: Sendable, Identifiable, Hashable {
         /// Stable key derived from the grouping mode, used for colour assignment.
         public var id: String
@@ -21,8 +9,14 @@ public struct SpendReport: Sendable {
         /// Secondary text, e.g. the vendor of a model or the adapter name.
         public var detail: String?
         public var total: Decimal
-        /// One value per bucket in `buckets`, aligned by index.
-        public var amounts: [Decimal]
+        /// One entry per bucket in `buckets`, aligned by index. Counters travel
+        /// with the spend so a single bar can be broken down on its own.
+        public var perBucket: [BucketValues]
+        /// Bar heights only, for the chart.
+        public var amounts: [Decimal] {
+            perBucket.map(\.amount)
+        }
+
         /// Amount inside `headlineRange`. This differs from `amounts.last` for
         /// the hourly window, whose headline is a trailing 60 minutes rather
         /// than the current clock-hour bucket.
@@ -45,12 +39,20 @@ public struct SpendReport: Sendable {
             promptTokens + completionTokens
         }
 
+        public var currentTokens: Int {
+            currentPromptTokens + currentCompletionTokens
+        }
+
         public var share: Decimal {
-            amounts.reduce(0, +)
+            perBucket.reduce(0) { $0 + $1.amount }
         }
     }
 
     public var window: SpendWindow
+    /// Calendar — and therefore time zone — the buckets were cut with. A
+    /// bucket's interval has to be formatted in the same zone it was built in,
+    /// or a UTC bucket renders in local time.
+    public var calendar: Calendar
     public var grouping: SpendGrouping
     public var buckets: [Bucket]
     public var series: [Series]
@@ -85,9 +87,15 @@ public struct SpendReport: Sendable {
     public var warnings: [String]
     public var generatedAt: Date
 
-    public static func empty(window: SpendWindow, grouping: SpendGrouping, buckets: [Bucket]) -> SpendReport {
+    public static func empty(
+        window: SpendWindow,
+        grouping: SpendGrouping,
+        buckets: [Bucket],
+        calendar: Calendar
+    ) -> SpendReport {
         SpendReport(
             window: window,
+            calendar: calendar,
             grouping: grouping,
             buckets: buckets,
             series: [],
@@ -210,6 +218,7 @@ public enum SpendAggregator {
 
         return SpendReport(
             window: bucketing.window,
+            calendar: bucketing.calendar,
             grouping: grouping,
             buckets: buckets,
             series: rankedSeries(from: fold.accumulator, limit: seriesLimit),
@@ -329,7 +338,10 @@ public enum SpendAggregator {
             fold.promptTokens += slice.promptTokens
             fold.completionTokens += slice.completionTokens
             fold.requests += slice.requests
-            entry.amounts[index] += slice.amount
+            entry.perBucket[index].amount += slice.amount
+            entry.perBucket[index].promptTokens += slice.promptTokens
+            entry.perBucket[index].completionTokens += slice.completionTokens
+            entry.perBucket[index].requests += slice.requests
             entry.total += slice.amount
             entry.promptTokens += slice.promptTokens
             entry.completionTokens += slice.completionTokens
@@ -375,7 +387,7 @@ public enum SpendAggregator {
             key: "other",
             label: "Other",
             detail: "\(overflow.count) more",
-            bucketCount: sorted.first?.amounts.count ?? 0
+            bucketCount: sorted.first?.perBucket.count ?? 0
         )
         for entry in overflow {
             other.total += entry.total
@@ -386,8 +398,11 @@ public enum SpendAggregator {
             other.currentPromptTokens += entry.currentPromptTokens
             other.currentCompletionTokens += entry.currentCompletionTokens
             other.currentRequests += entry.currentRequests
-            for (index, amount) in entry.amounts.enumerated() {
-                other.amounts[index] += amount
+            for index in other.perBucket.indices where entry.perBucket.indices.contains(index) {
+                other.perBucket[index].amount += entry.perBucket[index].amount
+                other.perBucket[index].promptTokens += entry.perBucket[index].promptTokens
+                other.perBucket[index].completionTokens += entry.perBucket[index].completionTokens
+                other.perBucket[index].requests += entry.perBucket[index].requests
             }
         }
         series.append(other.series(isOther: true, foldedCount: overflow.count))
@@ -398,7 +413,7 @@ public enum SpendAggregator {
         var key: String
         var label: String
         var detail: String?
-        var amounts: [Decimal]
+        var perBucket: [SpendReport.BucketValues]
         var total: Decimal = 0
         var currentAmount: Decimal = 0
         var promptTokens = 0
@@ -412,7 +427,7 @@ public enum SpendAggregator {
             self.key = key
             self.label = label
             self.detail = detail
-            amounts = [Decimal](repeating: 0, count: bucketCount)
+            perBucket = [SpendReport.BucketValues](repeating: .init(), count: bucketCount)
         }
 
         func series(isOther: Bool, foldedCount: Int) -> SpendReport.Series {
@@ -421,7 +436,7 @@ public enum SpendAggregator {
                 label: label,
                 detail: detail,
                 total: total,
-                amounts: amounts,
+                perBucket: perBucket,
                 currentAmount: currentAmount,
                 promptTokens: promptTokens,
                 completionTokens: completionTokens,

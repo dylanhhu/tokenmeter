@@ -6,31 +6,45 @@ import TokenMeterKit
 /// chart, and the ranking that explains it.
 struct SpendPopoverView: View {
     let model: AppModel
+    /// Bar the tooltip starts pinned to; see `init`.
+    private let initialHoverIndex: Int?
 
     @Environment(\.openWindow) private var openWindow
 
     private let width: CGFloat = 372
 
     private enum Layout {
-        /// Height used for the first layout pass, before the content has been
-        /// measured. An explicit non-zero value matters: a `MenuBarExtra` window
-        /// asks the content for a size under a proposal that leaves a bare
-        /// `ScrollView` at zero height, which collapses the drop-down to its
-        /// header and footer.
-        static let initialContentHeight: CGFloat = 430
+        /// Height of the scrollable column.
+        ///
+        /// A `ScrollView` has no ideal height along its scroll axis, so the
+        /// column needs an explicit one or the drop-down collapses to its header
+        /// and footer. It is a constant rather than a measurement because
+        /// `MenuBarExtra` re-anchors its window whenever the content's height
+        /// changes: measuring made the popover jump as data arrived, a provider
+        /// issue appeared, or a selected slice added its banner. With a fixed
+        /// height the chart absorbs the slack when the breakdown is short, and
+        /// the list scrolls when it is long.
+        static let contentHeight: CGFloat = 620
 
-        /// Ceiling on the measured height, so a long breakdown scrolls instead of
-        /// growing the popover into the menu bar and the Dock.
-        static let maxContentHeight: CGFloat = 620
+        /// Padding around the scrolling column. The column's minimum height is
+        /// the viewport minus this, so the padding does not push it into a
+        /// permanent scroll.
+        static let verticalPadding: CGFloat = 12
     }
 
-    /// Height of the scrollable column, measured from its content.
-    ///
-    /// `MenuBarExtra` sizes its window from the view tree's ideal size, and a
-    /// `ScrollView` has none along its scroll axis. Without this the dropped-down
-    /// window is only as tall as the fixed header and footer, so the chart and
-    /// breakdown never appear regardless of how much data the provider returned.
-    @State private var contentHeight: CGFloat = Layout.initialContentHeight
+    /// Start of the bar the user clicked, or nil while the breakdown describes
+    /// the in-progress period. Transient by design: reopening the popover is a
+    /// request for the headline reading, not for the slice inspected last time.
+    @State private var selection: Date?
+
+    /// - Parameter initialSelection: bucket to start with selected, and
+    ///   `initialHoverIndex`: bar to start with the tooltip pinned to. Both exist
+    ///   for the snapshot renderer; a live popover starts on the headline period.
+    init(model: AppModel, initialSelection: Date? = nil, initialHoverIndex: Int? = nil) {
+        self.model = model
+        self.initialHoverIndex = initialHoverIndex
+        _selection = State(initialValue: initialSelection)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -44,22 +58,20 @@ struct SpendPopoverView: View {
                         if !model.issues.isEmpty {
                             issueList
                         }
-                        SpendChart(report: report)
+                        SpendChart(report: report, selection: $selection, initialHoverIndex: initialHoverIndex)
                         Divider().opacity(0.4)
                         breakdown(report)
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
-                        }
+                    .padding(.vertical, Layout.verticalPadding)
+                    // Fill the viewport so the flexible chart takes the slack
+                    // instead of leaving a gap above the footer.
+                    .frame(
+                        minHeight: Layout.contentHeight - Layout.verticalPadding * 2,
+                        alignment: .top
                     )
                 }
-                .frame(height: contentHeight)
-                .onPreferenceChange(ContentHeightKey.self) { measured in
-                    contentHeight = min(max(measured, 200), Layout.maxContentHeight)
-                }
+                .frame(height: Layout.contentHeight)
             } else {
                 emptyState
             }
@@ -107,7 +119,11 @@ struct SpendPopoverView: View {
     private var windowBinding: Binding<SpendWindow> {
         Binding(
             get: { model.settings.menuBarWindow },
-            set: { model.setWindow($0) }
+            set: { window in
+                // The selected bar belongs to the old window's buckets.
+                selection = nil
+                model.setWindow(window)
+            }
         )
     }
 
@@ -158,7 +174,9 @@ struct SpendPopoverView: View {
 
     private func breakdown(_ report: SpendReport) -> some View {
         let measure = effectiveMeasure(report)
+        let period = selectedPeriod(in: report)
         let efficiency = report.efficiency
+        let rows = report.breakdown(for: period, measure: measure)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("Breakdown")
@@ -181,19 +199,71 @@ struct SpendPopoverView: View {
                 measurePicker(report, selected: measure)
             }
 
+            if period != .current {
+                selectionBanner(report, period: period)
+            }
+
             if report.series.isEmpty {
                 Text("No attributable spend yet.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if rows.isEmpty {
+                Text("No spend in this slice.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             } else {
-                BreakdownList(rows: report.currentBreakdown(measure: measure))
+                BreakdownList(rows: rows)
             }
 
-            if efficiency.hasData {
+            // Efficiency covers the whole window, so it would contradict a
+            // single-slice reading. Show it only when the rows do too.
+            if period == .current, efficiency.hasData {
                 Divider().opacity(0.35).padding(.vertical, 1)
                 TokenEfficiencyView(efficiency: efficiency, caption: report.windowSpanLabel)
             }
         }
+    }
+
+    /// The interval the breakdown describes.
+    ///
+    /// A selection that no longer maps to a bucket — the window changed, or the
+    /// hourly window rolled past it — falls back to the headline period instead
+    /// of rendering an empty list.
+    private func selectedPeriod(in report: SpendReport) -> SpendReport.BreakdownPeriod {
+        guard let selection, report.bucketIndex(startingAt: selection) != nil else { return .current }
+        return .bucket(selection)
+    }
+
+    /// States which bar the rows below describe, and the denominator they share,
+    /// so a slice is never mistaken for the headline period.
+    private func selectionBanner(_ report: SpendReport, period: SpendReport.BreakdownPeriod) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
+            Text(report.caption(for: period))
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+            Text(Money.precise(report.totals(for: period).spend))
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button {
+                selection = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Show the whole \(report.currentBreakdownLabel) again")
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
     }
 
     /// Falls back to spend when the active measure has no data — a credential
@@ -352,15 +422,5 @@ struct SpendPopoverView: View {
     private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: WindowID.settings)
-    }
-}
-
-/// Carries the scrollable column's natural height back up to the frame that
-/// constrains it.
-private struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

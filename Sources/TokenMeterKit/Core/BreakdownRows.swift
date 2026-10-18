@@ -79,11 +79,35 @@ public extension SpendReport {
         }
     }
 
+    /// Which interval a set of breakdown rows describes.
+    ///
+    /// A share is only meaningful against the denominator it was divided by, so
+    /// the period travels with the rows instead of being inferred from the
+    /// headline. `.bucket` is the one the user picked by clicking a bar; it is
+    /// deliberately distinct from `.current`, which stays the in-progress period
+    /// behind the headline.
+    enum BreakdownPeriod: Hashable, Sendable {
+        /// The in-progress period the headline reports.
+        case current
+        /// Every displayed bucket.
+        case window
+        /// One chart bucket, identified by its start so it survives a refresh.
+        case bucket(Date)
+    }
+
+    /// Totals for one breakdown period, the denominator behind every share shown
+    /// against it.
+    struct PeriodTotals: Sendable, Hashable {
+        public var spend: Decimal
+        public var tokens: Int
+        public var requests: Int
+    }
+
     /// Rows for the headline period, ranked by `measure` and sharing its
     /// denominator. For the hourly window that period is a trailing 60 minutes,
     /// which can overlap two clock-hour buckets.
     func currentBreakdown(measure: BreakdownMeasure = .spend) -> [BreakdownRow] {
-        breakdown(measure: measure, current: true)
+        breakdown(for: .current, measure: measure)
     }
 
     /// Rows for the headline period, ranked by spend. Kept as the default
@@ -95,7 +119,7 @@ public extension SpendReport {
     /// Rows summed across every displayed bucket, for "where did the last N
     /// buckets go" reading. Ranked by `measure` across the window.
     func windowBreakdown(measure: BreakdownMeasure = .spend) -> [BreakdownRow] {
-        breakdown(measure: measure, current: false)
+        breakdown(for: .window, measure: measure)
     }
 
     /// Rows summed across every displayed bucket, ranked by spend.
@@ -103,12 +127,60 @@ public extension SpendReport {
         windowBreakdown(measure: .spend)
     }
 
+    /// The bucket starting at `start`, when the report still holds it.
+    func bucket(startingAt start: Date) -> Bucket? {
+        bucketIndex(startingAt: start).map { buckets[$0] }
+    }
+
+    /// Index of the bucket starting at `start`. A selection is a start date
+    /// rather than an index so it survives a refresh that re-cuts the buckets.
+    func bucketIndex(startingAt start: Date) -> Int? {
+        buckets.firstIndex { $0.start == start }
+    }
+
+    /// Caption for the denominator behind a set of rows, e.g. `today`, `14 daily
+    /// buckets`, or `2:00 – 3:00 PM` for a selected bar.
+    func caption(for period: BreakdownPeriod) -> String {
+        switch period {
+        case .current: currentBreakdownLabel
+        case .window: windowBreakdownLabel
+        case let .bucket(start):
+            bucket(startingAt: start).map(label(for:)) ?? window.title.lowercased()
+        }
+    }
+
+    /// Human label for one bucket's interval, in the report's own time zone.
+    func label(for bucket: Bucket) -> String {
+        window.bucketRangeLabel(start: bucket.start, end: bucket.end, calendar: calendar)
+    }
+
+    /// Spend, tokens, and requests for one period. For `.bucket` the spend comes
+    /// from the bar itself, so the denominator always equals its height.
+    func totals(for period: BreakdownPeriod) -> PeriodTotals {
+        switch period {
+        case .current:
+            return PeriodTotals(spend: currentPeriodTotal, tokens: currentTokens, requests: currentRequests)
+        case .window:
+            return PeriodTotals(spend: grandTotal, tokens: totalTokens, requests: requests)
+        case let .bucket(start):
+            guard let index = bucketIndex(startingAt: start) else {
+                return PeriodTotals(spend: 0, tokens: 0, requests: 0)
+            }
+            var totals = PeriodTotals(spend: buckets[index].total, tokens: 0, requests: 0)
+            for series in series where series.perBucket.indices.contains(index) {
+                totals.tokens += series.perBucket[index].tokens
+                totals.requests += series.perBucket[index].requests
+            }
+            return totals
+        }
+    }
+
     /// Denominator for the active measure over the requested period.
-    func denominator(for measure: BreakdownMeasure, current: Bool) -> Double {
+    func denominator(for measure: BreakdownMeasure, in totals: PeriodTotals) -> Double {
         switch measure {
-        case .spend: (current ? currentPeriodTotal : grandTotal).doubleValue
-        case .tokens: Double(current ? currentTokens : totalTokens)
-        case .requests: Double(current ? currentRequests : requests)
+        case .spend: totals.spend.doubleValue
+        case .tokens: Double(totals.tokens)
+        case .requests: Double(totals.requests)
         }
     }
 
@@ -116,34 +188,33 @@ public extension SpendReport {
     /// all three readings so the view can show a row's share of tokens next to
     /// its share of the bill.
     ///
-    /// The current and window denominators differ, and that difference is the
-    /// whole point of the invariant: a token row under a "$9.50 today" headline
-    /// must describe today's tokens, not the window's. "Current" means the
-    /// headline interval, which for the hourly window spans two clock-hour
-    /// buckets rather than aligning with the last bar.
-    private func breakdown(measure: BreakdownMeasure, current: Bool) -> [BreakdownRow] {
-        let spendDenominator = denominator(for: .spend, current: current)
-        let tokenDenominator = denominator(for: .tokens, current: current)
-        let requestDenominator = denominator(for: .requests, current: current)
+    /// Every period has its own denominator, and that difference is the whole
+    /// point of the invariant: a token row under a "$9.50 today" headline must
+    /// describe today's tokens, not the window's. `.current` means the headline
+    /// interval, which for the hourly window spans two clock-hour buckets rather
+    /// than aligning with the last bar. `.bucket` narrows all of that to one bar.
+    func breakdown(for period: BreakdownPeriod, measure: BreakdownMeasure = .spend) -> [BreakdownRow] {
+        let totals = totals(for: period)
+        let measureDenominator = denominator(for: measure, in: totals)
 
-        let rows = orderedSeries.enumerated().map { index, series -> BreakdownRow in
-            let amount = current ? series.currentAmount : series.total
-            let tokens = current
-                ? series.currentPromptTokens + series.currentCompletionTokens
-                : series.totalTokens
-            let requestCount = current ? series.currentRequests : series.requests
-            let value = measureValue(measure, amount: amount, tokens: tokens, requests: requestCount)
-            let measureDenominator = denominator(for: measure, current: current)
+        let rows = orderedSeries.enumerated().compactMap { index, series -> BreakdownRow? in
+            guard let values = values(of: series, in: period) else { return nil }
+            // A single bar is usually empty for most series; listing them at $0
+            // would bury the rows that make up the bar.
+            if case .bucket = period, values.amount == 0, values.tokens == 0, values.requests == 0 {
+                return nil
+            }
+            let value = measureValue(measure, amount: values.amount, tokens: values.tokens, requests: values.requests)
             return BreakdownRow(
                 series: series,
                 measure: measure,
-                amount: amount,
-                tokens: tokens,
-                requests: requestCount,
+                amount: values.amount,
+                tokens: values.tokens,
+                requests: values.requests,
                 share: fraction(value, of: measureDenominator),
-                spendShare: fraction(amount.doubleValue, of: spendDenominator),
-                tokenShare: fraction(Double(tokens), of: tokenDenominator),
-                requestShare: fraction(Double(requestCount), of: requestDenominator),
+                spendShare: fraction(values.amount.doubleValue, of: totals.spend.doubleValue),
+                tokenShare: fraction(Double(values.tokens), of: Double(totals.tokens)),
+                requestShare: fraction(Double(values.requests), of: Double(totals.requests)),
                 colorIndex: index
             )
         }
@@ -168,4 +239,32 @@ public extension SpendReport {
         case .requests: Double(requests)
         }
     }
+
+    /// One series' contribution to `period`, or nil when the period cannot
+    /// describe it (a bucket that no longer exists).
+    private func values(of series: Series, in period: BreakdownPeriod) -> PeriodValues? {
+        switch period {
+        case .current:
+            return PeriodValues(
+                amount: series.currentAmount,
+                tokens: series.currentTokens,
+                requests: series.currentRequests
+            )
+        case .window:
+            return PeriodValues(amount: series.total, tokens: series.totalTokens, requests: series.requests)
+        case let .bucket(start):
+            guard let index = bucketIndex(startingAt: start), series.perBucket.indices.contains(index) else {
+                return nil
+            }
+            let bucket = series.perBucket[index]
+            return PeriodValues(amount: bucket.amount, tokens: bucket.tokens, requests: bucket.requests)
+        }
+    }
+}
+
+/// One series' spend, tokens, and requests for the period being described.
+private struct PeriodValues {
+    var amount: Decimal
+    var tokens: Int
+    var requests: Int
 }
