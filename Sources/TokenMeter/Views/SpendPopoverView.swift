@@ -12,15 +12,25 @@ struct SpendPopoverView: View {
     private let width: CGFloat = 372
 
     private enum Layout {
-        /// Floor on the scrollable column's height. A provider that reports two or
-        /// three series would otherwise leave the popover little taller than its
-        /// own header; the slack goes to the chart rather than to dead space.
-        static let minContentHeight: CGFloat = 430
+        /// Height used for the first layout pass, before the content has been
+        /// measured. An explicit non-zero value matters: a `MenuBarExtra` window
+        /// asks the content for a size under a proposal that leaves a bare
+        /// `ScrollView` at zero height, which collapses the drop-down to its
+        /// header and footer.
+        static let initialContentHeight: CGFloat = 430
 
-        /// Ceiling on the same column, so a long breakdown scrolls instead of
+        /// Ceiling on the measured height, so a long breakdown scrolls instead of
         /// growing the popover into the menu bar and the Dock.
         static let maxContentHeight: CGFloat = 620
     }
+
+    /// Height of the scrollable column, measured from its content.
+    ///
+    /// `MenuBarExtra` sizes its window from the view tree's ideal size, and a
+    /// `ScrollView` has none along its scroll axis. Without this the dropped-down
+    /// window is only as tall as the fixed header and footer, so the chart and
+    /// breakdown never appear regardless of how much data the provider returned.
+    @State private var contentHeight: CGFloat = Layout.initialContentHeight
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -38,11 +48,18 @@ struct SpendPopoverView: View {
                         Divider().opacity(0.4)
                         breakdown(report)
                     }
-                    .frame(minHeight: Layout.minContentHeight, alignment: .top)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                        }
+                    )
                 }
-                .frame(maxHeight: Layout.maxContentHeight)
+                .frame(height: contentHeight)
+                .onPreferenceChange(ContentHeightKey.self) { measured in
+                    contentHeight = min(max(measured, 200), Layout.maxContentHeight)
+                }
             } else {
                 emptyState
             }
@@ -300,5 +317,15 @@ struct SpendPopoverView: View {
     private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: WindowID.settings)
+    }
+}
+
+/// Carries the scrollable column's natural height back up to the frame that
+/// constrains it.
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
