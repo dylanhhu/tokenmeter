@@ -85,7 +85,7 @@ struct SpendPopoverView: View {
             .controlSize(.small)
 
             Menu {
-                Button("Refresh Now") { model.refresh(reason: "manual") }
+                Button("Refresh Now") { model.refresh(reason: "manual", force: true) }
                     .keyboardShortcut("r")
                 Button("Settings…") { openSettings() }
                     .keyboardShortcut(",")

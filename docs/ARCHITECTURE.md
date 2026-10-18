@@ -173,6 +173,10 @@ How to read the resulting figures, and where each one misleads, is in
   the failure as a `ProviderIssue` row instead of blanking the chart
 - refreshes on a timer, on wake, on wall-clock change, and when the popover opens
   (only if the data is stale)
+- serves the popover and window switching from `SpendResultCache`, which keeps one
+  response per (provider, window, time zone) for the refresh interval, and only
+  while that response still spans the requested range. Manual refresh, a probe,
+  and credential changes bypass or invalidate it
 - coerces the selected window when capabilities no longer support it
 
 ## Storage

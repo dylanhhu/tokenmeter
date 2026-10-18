@@ -50,6 +50,9 @@ final class AppModel {
     /// uncached read per refresh becomes a prompt loop, and because the read used
     /// to happen on the main actor it also delayed the menu bar item.
     private var credentialCache: [ProviderID: String?] = [:]
+    /// Recently fetched provider results, so navigating the popover does not
+    /// re-query every vendor. Filled and read by `ProviderFetch.fetchAll`.
+    private let resultCache: SpendResultCache
     private var reportBucketing: Bucketing
     private var refreshLoop: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
@@ -65,8 +68,19 @@ final class AppModel {
         self.credentialStore = credentialStore
         let loaded = settingsStore.load()
         settings = loaded
+        resultCache = SpendResultCache(ttl: Self.cacheLifetime(for: loaded))
         reportBucketing = Bucketing(window: loaded.menuBarWindow, timeZoneMode: loaded.timeZoneMode)
         connectedProviders = ProviderFetch.syntheticProviders(in: loaded.enabledProviders)
+    }
+
+    /// How long a fetched result may be reused without asking the vendor again.
+    ///
+    /// This is the refresh interval, so a user who asked for infrequent refreshes
+    /// is not refetched by clicking the menu bar icon or flipping window tabs.
+    /// The floor keeps the default 5-minute interval from turning rapid UI
+    /// navigation into a stream of API calls.
+    static func cacheLifetime(for settings: AppSettings) -> TimeInterval {
+        max(60, settings.refreshInterval)
     }
 
     // MARK: - Lifecycle
@@ -104,6 +118,8 @@ final class AppModel {
 
     func restartRefreshLoop() {
         refreshLoop?.cancel()
+        let lifetime = Self.cacheLifetime(for: settings)
+        Task { await resultCache.setTimeToLive(lifetime) }
         let interval = max(30, settings.refreshInterval)
         refreshLoop = Task { [weak self] in
             while !Task.isCancelled {
@@ -195,19 +211,23 @@ final class AppModel {
         updateSettings { $0.menuBarWindow = window }
     }
 
-    /// Refreshes only when the cached report is older than `maxAge`, so opening
-    /// the popover repeatedly does not hammer provider APIs.
     /// Awaits one refresh. Used by the snapshot renderer, which must not race
     /// against the fire-and-forget timer path.
     func refreshForSnapshot() async {
-        refresh(reason: "snapshot")
+        refresh(reason: "snapshot", force: true)
         while isRefreshing {
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
     }
 
-    func refreshIfStale(maxAge: TimeInterval = 30) {
-        if let lastRefresh, Date.now.timeIntervalSince(lastRefresh) < maxAge {
+    /// Refreshes only when the data is older than `maxAge`, so opening the popover
+    /// repeatedly does not hammer provider APIs. Even a refresh inside that
+    /// window would be answered by `resultCache`; skipping it also avoids
+    /// rebuilding the report from slices whose in-progress bucket has moved on.
+    func refreshIfStale(maxAge: TimeInterval? = nil) {
+        guard !isRefreshing else { return }
+        let age = maxAge ?? Self.cacheLifetime(for: settings)
+        if let lastRefresh, Date.now.timeIntervalSince(lastRefresh) < age {
             return
         }
         refresh(reason: "popover")
@@ -241,6 +261,10 @@ final class AppModel {
             try credentialStore.save(secret, for: id)
             let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
             remember(trimmed.isEmpty ? nil : trimmed, for: id)
+            // A result fetched with the previous credential may carry different
+            // capabilities, and the key is deliberately credential-free.
+            let cache = resultCache
+            Task { await cache.invalidate(providers: [id]) }
             return nil
         } catch {
             Log.credentials.error("Saving credential failed: \(error.localizedDescription, privacy: .public)")
@@ -259,7 +283,9 @@ final class AppModel {
         accountInfo[id] = nil
         contributions.removeAll { $0.providerID == id }
         rebuildReport()
-        refresh(reason: "credential-removed")
+        let cache = resultCache
+        Task { await cache.invalidate(providers: [id]) }
+        refresh(reason: "credential-removed", force: true)
     }
 
     /// Records what the Keychain returned for a provider and keeps the connected
@@ -296,7 +322,10 @@ final class AppModel {
 
     // MARK: - Refresh
 
-    func refresh(reason: String) {
+    /// - Parameter force: Bypasses `resultCache`, for a user-initiated refresh or
+    ///   a fetch that follows a credential change. Ordinary triggers reuse recent
+    ///   results.
+    func refresh(reason: String, force: Bool = false) {
         inFlight?.cancel()
         if settings.enabledProviders.isEmpty {
             isRefreshing = false
@@ -312,13 +341,20 @@ final class AppModel {
         let request = SpendRequest(bucketing: bucketing)
         let keychain = credentialStore
         let cached = credentialCache
+        let cache = resultCache
+        let bypassCache = force
 
         isRefreshing = true
         inFlight = Task { [weak self] in
             let credentials = await ProviderFetch.loadCredentials(for: enabled, store: keychain, cached: cached)
             guard !Task.isCancelled else { return }
             let providers = ProviderFetch.makeProviders(for: enabled, credentials: credentials)
-            let results = await ProviderFetch.fetchAll(providers: providers, request: request)
+            let results = await ProviderFetch.fetchAll(
+                providers: providers,
+                request: request,
+                cache: cache,
+                bypassCache: bypassCache
+            )
             guard !Task.isCancelled, let self else { return }
             apply(results: results, credentials: credentials, enabled: enabled, bucketing: bucketing)
         }
@@ -345,7 +381,13 @@ final class AppModel {
         bucketing: Bucketing
     ) {
         isRefreshing = false
-        lastRefresh = .now
+        // Report the age of the data, not the age of this refresh: a cache hit
+        // would otherwise make old numbers look freshly fetched.
+        lastRefresh = results.map(\.fetchedAt).max() ?? .now
+        let cachedCount = results.count(where: \.isCached)
+        if cachedCount > 0 {
+            Log.providers.debug("Served \(cachedCount, privacy: .public) of \(results.count, privacy: .public) results from cache")
+        }
 
         var newContributions: [SpendAggregator.Contribution] = []
         var newIssues: [ProviderIssue] = []

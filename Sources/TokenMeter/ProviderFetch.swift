@@ -14,6 +14,11 @@ enum ProviderFetch {
         var providerID: ProviderID
         var providerName: String
         var result: Result<SpendFetchResult, SpendProviderError>
+        /// When the provider answered, which may be earlier than this refresh
+        /// when the result came from the cache.
+        var fetchedAt: Date
+        /// True when the cache answered instead of the vendor.
+        var isCached: Bool
     }
 
     static func syntheticProviders(in ids: [ProviderID]) -> Set<ProviderID> {
@@ -58,26 +63,58 @@ enum ProviderFetch {
 
     /// Fetches every provider concurrently. A provider that throws becomes a
     /// failure outcome rather than failing the whole refresh.
+    ///
+    /// When `cache` is supplied, a provider whose result is still fresh and still
+    /// covers the requested range is not queried at all. Failures are never
+    /// cached, so a transient error is retried on the next refresh. `bypassCache`
+    /// forces the fetch but still warms the cache for the next navigation.
     static func fetchAll(
         providers: [(ProviderID, any SpendProvider)],
-        request: SpendRequest
+        request: SpendRequest,
+        cache: SpendResultCache? = nil,
+        bypassCache: Bool = false
     ) async -> [Outcome] {
         await withTaskGroup(of: Outcome.self) { group in
             for (id, provider) in providers {
                 let name = provider.descriptor.displayName
+                let key = SpendResultCache.Key(providerID: id, request: request)
                 group.addTask {
+                    if !bypassCache, let cache, let hit = await cache.entry(for: key, request: request) {
+                        return Outcome(
+                            providerID: id,
+                            providerName: name,
+                            result: .success(hit.result),
+                            fetchedAt: hit.fetchedAt,
+                            isCached: true
+                        )
+                    }
                     do {
                         let result = try await withTimeout(seconds: 30) {
                             try await provider.fetchSpend(request)
                         }
-                        return Outcome(providerID: id, providerName: name, result: .success(result))
+                        await cache?.store(result, for: key, request: request)
+                        return Outcome(
+                            providerID: id,
+                            providerName: name,
+                            result: .success(result),
+                            fetchedAt: .now,
+                            isCached: false
+                        )
                     } catch let error as SpendProviderError {
-                        return Outcome(providerID: id, providerName: name, result: .failure(error))
+                        return Outcome(
+                            providerID: id,
+                            providerName: name,
+                            result: .failure(error),
+                            fetchedAt: .now,
+                            isCached: false
+                        )
                     } catch {
                         return Outcome(
                             providerID: id,
                             providerName: name,
-                            result: .failure(.network(error.localizedDescription))
+                            result: .failure(.network(error.localizedDescription)),
+                            fetchedAt: .now,
+                            isCached: false
                         )
                     }
                 }

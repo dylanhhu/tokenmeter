@@ -123,6 +123,11 @@ Break one of these and you have introduced a bug, even if it compiles.
     requests, never the window's. `BreakdownRow` carries all three shares for the
     same period so the divergence stays visible. Efficiency figures are the one
     exception: they cover the whole window and say so in their caption.
+11. **Provider results are cached; navigation is free.** `SpendResultCache` holds
+    one result per (provider, window, time zone) for the refresh interval, and
+    serves it only while it still spans the requested range. Opening the popover
+    or switching windows must not query a vendor. Manual refresh and credential
+    changes force a fetch; credential changes also invalidate the entry.
 
 ## Adding a provider
 

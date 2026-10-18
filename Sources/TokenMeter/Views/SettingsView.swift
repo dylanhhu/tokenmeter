@@ -350,7 +350,7 @@ private struct ProviderRow: View {
             case let .failure(error):
                 status = .failure(error.errorDescription ?? "Could not verify credential.")
             }
-            model.refresh(reason: "probe")
+            model.refresh(reason: "probe", force: true)
         }
     }
 
