@@ -41,6 +41,15 @@ final class AppModel {
     private(set) var emptyStateMessage: String?
 
     private var contributions: [SpendAggregator.Contribution] = []
+    /// Credentials are read from the Keychain at most once per process and then
+    /// reused.
+    ///
+    /// A read can block on a system prompt — ad-hoc signed builds get a new code
+    /// identity on every rebuild, so macOS no longer matches them to the keychain
+    /// ACL and asks again. With the refresh loop running every 60 seconds, an
+    /// uncached read per refresh becomes a prompt loop, and because the read used
+    /// to happen on the main actor it also delayed the menu bar item.
+    private var credentialCache: [ProviderID: String?] = [:]
     private var reportBucketing: Bucketing
     private var refreshLoop: Task<Void, Never>?
     private var inFlight: Task<Void, Never>?
@@ -57,7 +66,7 @@ final class AppModel {
         let loaded = settingsStore.load()
         settings = loaded
         reportBucketing = Bucketing(window: loaded.menuBarWindow, timeZoneMode: loaded.timeZoneMode)
-        refreshConnectedProviders()
+        connectedProviders = ProviderFetch.syntheticProviders(in: loaded.enabledProviders)
     }
 
     // MARK: - Lifecycle
@@ -218,14 +227,20 @@ final class AppModel {
 
     func credential(for id: ProviderID) -> String? {
         guard !(ProviderCatalog.descriptor(for: id)?.isSynthetic ?? false) else { return nil }
-        return try? credentialStore.load(for: id)
+        if let cached = credentialCache.first(where: { $0.key == id }) {
+            return cached.value
+        }
+        let value = try? credentialStore.load(for: id)
+        credentialCache.updateValue(value, forKey: id)
+        return value
     }
 
     @discardableResult
     func saveCredential(_ secret: String, for id: ProviderID) -> String? {
         do {
             try credentialStore.save(secret, for: id)
-            refreshConnectedProviders()
+            let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+            remember(trimmed.isEmpty ? nil : trimmed, for: id)
             return nil
         } catch {
             Log.credentials.error("Saving credential failed: \(error.localizedDescription, privacy: .public)")
@@ -239,7 +254,7 @@ final class AppModel {
         } catch {
             Log.credentials.error("Deleting credential failed: \(error.localizedDescription, privacy: .public)")
         }
-        refreshConnectedProviders()
+        remember(nil, for: id)
         capabilities[id] = nil
         accountInfo[id] = nil
         contributions.removeAll { $0.providerID == id }
@@ -247,16 +262,16 @@ final class AppModel {
         refresh(reason: "credential-removed")
     }
 
-    private func refreshConnectedProviders() {
-        var connected: Set<ProviderID> = []
-        for id in settings.enabledProviders {
-            if ProviderCatalog.descriptor(for: id)?.isSynthetic == true {
-                connected.insert(id)
-            } else if (try? credentialStore.load(for: id))?.isEmpty == false {
-                connected.insert(id)
-            }
+    /// Records what the Keychain returned for a provider and keeps the connected
+    /// set in step. `nil` means "known to hold no credential", which is cached
+    /// just as deliberately as a value so a removed key is not re-read forever.
+    private func remember(_ secret: String?, for id: ProviderID) {
+        credentialCache.updateValue(secret, forKey: id)
+        if secret?.isEmpty == false {
+            connectedProviders.insert(id)
+        } else {
+            connectedProviders.remove(id)
         }
-        connectedProviders = connected
     }
 
     /// Verifies a credential and reports what it unlocks. Does not persist it —
@@ -267,7 +282,7 @@ final class AppModel {
             return .failure(.missingCredential)
         }
         do {
-            let result = try await withTimeout(seconds: 20) {
+            let result = try await ProviderFetch.withTimeout(seconds: 20) {
                 try await provider.probe()
             }
             capabilities[id] = result
@@ -295,68 +310,17 @@ final class AppModel {
         let bucketing = Bucketing(window: window, timeZoneMode: timeZoneMode)
         reportBucketing = bucketing
         let request = SpendRequest(bucketing: bucketing)
-
-        let providers = makeProviders(for: enabled)
-        let missing = enabled.filter { id in
-            ProviderCatalog.descriptor(for: id)?.isSynthetic == false && providerCredentialMissing(id)
-        }
+        let keychain = credentialStore
+        let cached = credentialCache
 
         isRefreshing = true
         inFlight = Task { [weak self] in
-            let results = await Self.fetchAll(providers: providers, request: request)
+            let credentials = await ProviderFetch.loadCredentials(for: enabled, store: keychain, cached: cached)
+            guard !Task.isCancelled else { return }
+            let providers = ProviderFetch.makeProviders(for: enabled, credentials: credentials)
+            let results = await ProviderFetch.fetchAll(providers: providers, request: request)
             guard !Task.isCancelled, let self else { return }
-            apply(results: results, missingCredentials: missing, bucketing: bucketing)
-        }
-    }
-
-    private func providerCredentialMissing(_ id: ProviderID) -> Bool {
-        ProviderCatalog.descriptor(for: id)?.isSynthetic == false && (try? credentialStore.load(for: id))?.isEmpty != false
-    }
-
-    private func makeProviders(for ids: [ProviderID]) -> [(ProviderID, any SpendProvider)] {
-        ids.compactMap { id in
-            let descriptorIsSynthetic = ProviderCatalog.descriptor(for: id)?.isSynthetic ?? false
-            let credential = descriptorIsSynthetic ? nil : (try? credentialStore.load(for: id))
-            guard let provider = ProviderCatalog.makeProvider(id: id, credential: credential) else { return nil }
-            return (id, provider)
-        }
-    }
-
-    private struct Outcome: Sendable {
-        var providerID: ProviderID
-        var providerName: String
-        var result: Result<SpendFetchResult, SpendProviderError>
-    }
-
-    private nonisolated static func fetchAll(
-        providers: [(ProviderID, any SpendProvider)],
-        request: SpendRequest
-    ) async -> [Outcome] {
-        await withTaskGroup(of: Outcome.self) { group in
-            for (id, provider) in providers {
-                let name = provider.descriptor.displayName
-                group.addTask {
-                    do {
-                        let result = try await withTimeout(seconds: 30) {
-                            try await provider.fetchSpend(request)
-                        }
-                        return Outcome(providerID: id, providerName: name, result: .success(result))
-                    } catch let error as SpendProviderError {
-                        return Outcome(providerID: id, providerName: name, result: .failure(error))
-                    } catch {
-                        return Outcome(
-                            providerID: id,
-                            providerName: name,
-                            result: .failure(.network(error.localizedDescription))
-                        )
-                    }
-                }
-            }
-            var outcomes: [Outcome] = []
-            for await outcome in group {
-                outcomes.append(outcome)
-            }
-            return outcomes
+            apply(results: results, credentials: credentials, enabled: enabled, bucketing: bucketing)
         }
     }
 
@@ -374,14 +338,23 @@ final class AppModel {
         isCoercingWindow = false
     }
 
-    private func apply(results: [Outcome], missingCredentials: [ProviderID], bucketing: Bucketing) {
+    private func apply(
+        results: [ProviderFetch.Outcome],
+        credentials: [ProviderID: String?],
+        enabled: [ProviderID],
+        bucketing: Bucketing
+    ) {
         isRefreshing = false
         lastRefresh = .now
 
         var newContributions: [SpendAggregator.Contribution] = []
         var newIssues: [ProviderIssue] = []
 
-        for id in missingCredentials {
+        connectedProviders = ProviderFetch.syntheticProviders(in: enabled)
+        for id in enabled where ProviderCatalog.requiresCredential(id: id) {
+            let secret = ProviderFetch.credential(id, in: credentials)
+            remember(secret, for: id)
+            guard secret?.isEmpty != false else { continue }
             newIssues.append(
                 ProviderIssue(
                     providerID: id,
@@ -467,25 +440,5 @@ final class AppModel {
     /// Bucketing the current report was built with, used by the views for labels.
     var currentBucketing: Bucketing {
         reportBucketing
-    }
-}
-
-/// Races an operation against a timeout so one slow provider cannot stall a
-/// refresh indefinitely.
-func withTimeout<T: Sendable>(
-    seconds: TimeInterval,
-    operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            throw SpendProviderError.network("Timed out after \(Int(seconds))s")
-        }
-        defer { group.cancelAll() }
-        guard let value = try await group.next() else {
-            throw SpendProviderError.network("No result")
-        }
-        return value
     }
 }
