@@ -2,10 +2,6 @@ import AppKit
 import SwiftUI
 import TokenMeterKit
 
-enum WindowID {
-    static let settings = "settings"
-}
-
 struct SettingsView: View {
     let model: AppModel
 

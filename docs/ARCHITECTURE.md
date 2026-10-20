@@ -8,7 +8,7 @@ time zones, and what a credential can even read.
 
 ```mermaid
 graph TD
-    A[MenuBarExtra + popover] --> B[AppModel<br/>@MainActor state]
+    A[NSStatusItem + drop-down panel] --> B[AppModel<br/>@MainActor state]
     B --> C[ProviderCatalog]
     C --> D[OpenRouterProvider]
     C --> E[DemoProvider]
@@ -26,6 +26,72 @@ graph TD
 
 `TokenMeterKit` holds everything below the popover and knows nothing about
 SwiftUI. It is a normal SwiftPM library and is tested directly.
+
+## The menu bar item and its drop-down
+
+The app is an AppKit application with SwiftUI views: `StatusItemController` owns
+an `NSStatusItem` and `PopoverPanel` hosts `SpendPopoverView`. `MenuBarExtra` is
+deliberately not used. On macOS 27 the menu bar is composed by `MenuBarAgent` as
+a single window, and a bar reader — Bartender among them — finds an item by the
+accessibility identifier on its button. `MenuBarExtra` never sets one: reading
+`AXIdentifier` returns `kAXErrorFailure` (-25200), which Bartender reports as
+"could not read the item's accessibility identity", and the item cannot be
+tracked. `MenuBarExtra` also cannot take part in expanded interface sessions, the
+macOS 27 mechanism that keeps a custom drop-down in step with menu bar tracking.
+Both need the item to be ours.
+
+`MenuBarLabel` separates the two things the item carries: a constant
+accessibility identity and name, and the live reading in the title and tooltip.
+An identity derived from the figure would be useless to anything that stores it.
+Bartender derives identity keys from the accessibility title as well as the
+identifier, so the reading goes in the accessibility value instead. The item has
+no explicit autosave name: AppKit's default, `Item-0`, is the slot key macOS and
+Bartender have recorded (`status:com.dylanhu.TokenMeter::Item-0`), and renaming
+it presents a new item that a manager may file under Hidden.
+
+### Menu bar managers on macOS 27
+
+Bartender 7 hides items by holding a `MenuBarAgent` visibility restriction, an
+allow-list of bundle identifiers
+(`acquireAssertionWithID:origin:allowedSystemItems:allowedBundleIdentifiers:`).
+Items whose app is not on the list are withdrawn from the bar; the manager's
+reveal control, or quitting the manager, drops the restriction.
+
+`MenuBarAgent` only honours that list for apps installed in `/Applications`. A
+copy run from `build/`, a worktree, `~/Applications`, or anywhere else in the
+home folder is withdrawn for as long as the manager hides anything, even though
+the manager lists its bundle identifier, and returns when the restriction drops.
+This was established with otherwise identical probe apps in each location. The
+likely mechanism is that `MenuBarAgent` is sandboxed and asks LaunchServices for
+application information restricted to what it may read, which excludes the home
+folder. To see the real item under a manager, install with `make install` and run
+`/Applications/TokenMeter.app`.
+
+The symptom is visible in `MenuBarAgent`'s log: the item's
+`com.apple.appkit.status-items` scenes are unregistered at the moment of
+`didActivateVisibilityRestriction`, alongside the items the manager hides on
+purpose.
+
+On macOS 27 the system starts an expanded interface session when the item is
+clicked and ends it when the interaction does; the controller shows the panel in
+`statusItem(_:didBegin:)` and hides it in
+`statusItemDidEndExpandedInterfaceSession(_:animated:)`. Closing the panel from
+inside the app cancels `expandedInterfaceSession` so the session unwinds. Before
+27 there are no sessions, so a button target/action toggles the panel and event
+monitors supply Escape and click-outside dismissal.
+
+Position is the other half of what the old shell handled. The panel is placed
+once, when it is shown, and `PopoverPlacement` holds its top edge while the
+content changes height, so data arriving mid-read grows it downward instead of
+under the menu bar. The horizontal pin the previous `MenuBarExtra` shell needed
+is gone: a panel placed under the item does not follow the item when a refresh
+widens the label.
+
+macOS 27 leaves `NSStatusItem.button.window` as a stub at the origin, so an item
+frame is only used when it intersects a menu bar band. `PopoverPlacement.anchor`
+otherwise falls back to the pointer, which is on the item when a session was
+started by clicking it; Bartender reveals the item and replays that click, so a
+drop-down opened from the Bartender bar is covered by the same rule.
 
 ## The provider seam
 
@@ -198,11 +264,10 @@ How to read the resulting figures, and where each one misleads, is in
   window suffix) from the report rather than from settings. Pairing a
   stale report with the newly selected window's scale is what made the
   chart jump mid-refresh.
-- fixes the popover's content height rather than measuring it. `MenuBarExtra`
-  re-anchors its window whenever the content's height changes, so a measured
-  height made the drop-down jump as data arrived, a provider issue appeared, or a
-  selected slice added its caption. The chart absorbs the slack when the
-  breakdown is short; a long list scrolls instead of growing the window.
+- fixes the popover's content height rather than measuring it, so a refresh
+  cannot resize the panel around the reader. The panel holds its top edge while
+  the content changes height; the chart absorbs the slack when the breakdown is
+  short, and a long list scrolls instead of growing the window.
 - refreshes on a timer, on wake, on wall-clock change, and when the popover opens
   (only if the data is stale)
 - serves the popover and window switching from `SpendResultCache`, which keeps one

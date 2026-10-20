@@ -30,6 +30,11 @@ make install     # copies it to /Applications
 open -a TokenMeter
 ```
 
+Run the copy in `/Applications`. On macOS 27, menu bar managers such as
+Bartender 7 hide items through `MenuBarAgent`, which only lets apps in
+`/Applications` through; a build launched from `build/` (for example by
+`make run`) stays hidden while the manager is hiding items.
+
 `make bundle` ad-hoc signs the app. For a distributable build:
 
 ```bash
