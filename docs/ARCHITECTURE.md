@@ -8,7 +8,7 @@ time zones, and what a credential can even read.
 
 ```mermaid
 graph TD
-    A[MenuBarExtra + popover] --> B[AppModel<br/>@MainActor state]
+    A[NSStatusItem + drop-down panel] --> B[AppModel<br/>@MainActor state]
     B --> C[ProviderCatalog]
     C --> D[OpenRouterProvider]
     C --> E[DemoProvider]
@@ -27,24 +27,43 @@ graph TD
 `TokenMeterKit` holds everything below the popover and knows nothing about
 SwiftUI. It is a normal SwiftPM library and is tested directly.
 
-## The drop-down window
+## The menu bar item and its drop-down
 
-`MenuBarExtra` places its window under the status item and re-places it whenever
-either frame changes. Vertical movement is prevented at the source: the content
-height is a constant, so the window has no reason to grow or shrink (see State
-and failure handling). Horizontal movement cannot be prevented that way. Menu bar
-items are laid out from the right, so any change in width shifts an item's
-origin, and the label carries the live spend figure: a refresh that widens it —
-"$8.40" becoming "$12.10" — slides the item along the bar and drags the open
-popover with it, mid-read.
+The app is an AppKit application with SwiftUI views: `StatusItemController` owns
+an `NSStatusItem` and `PopoverPanel` hosts `SpendPopoverView`. `MenuBarExtra` is
+deliberately not used. On macOS 27 the menu bar is composed by `MenuBarAgent` as
+a single window, and a bar reader — Bartender among them — finds an item by the
+accessibility identifier on its button. `MenuBarExtra` never sets one: reading
+`AXIdentifier` returns `kAXErrorFailure` (-25200), which Bartender reports as
+"could not read the item's accessibility identity", and the item cannot be
+tracked. `MenuBarExtra` also cannot take part in expanded interface sessions, the
+macOS 27 mechanism that keeps a custom drop-down in step with menu bar tracking.
+Both need the item to be ours.
 
-`anchoredWhileOpen()` pins the window's horizontal origin for as long as it is on
-screen, undoing any move that arrives more than a quarter second after the window
-was ordered in (moves inside that window are its own placement). The vertical
-origin is left alone so the pin cannot fight a legitimate resize. Visibility
-drives the pin rather than key status: key also flips when the settings window
-takes focus, and AppKit posts no ordered-on/off-screen notification to observe
-instead.
+`MenuBarLabel` separates the two things the item carries: a constant
+accessibility identity and name, and the live reading in the title and tooltip.
+An identity derived from the figure would be useless to anything that stores it.
+
+On macOS 27 the system starts an expanded interface session when the item is
+clicked and ends it when the interaction does; the controller shows the panel in
+`statusItem(_:didBegin:)` and hides it in
+`statusItemDidEndExpandedInterfaceSession(_:animated:)`. Closing the panel from
+inside the app cancels `expandedInterfaceSession` so the session unwinds. Before
+27 there are no sessions, so a button target/action toggles the panel and event
+monitors supply Escape and click-outside dismissal.
+
+Position is the other half of what the old shell handled. The panel is placed
+once, when it is shown, and `PopoverPlacement` holds its top edge while the
+content changes height, so data arriving mid-read grows it downward instead of
+under the menu bar. The horizontal pin the previous `MenuBarExtra` shell needed
+is gone: a panel placed under the item does not follow the item when a refresh
+widens the label.
+
+macOS 27 leaves `NSStatusItem.button.window` as a stub at the origin, so an item
+frame is only used when it intersects a menu bar band. `PopoverPlacement.anchor`
+otherwise falls back to the pointer, which is on the item when a session was
+started by clicking it; Bartender reveals the item and replays that click, so a
+drop-down opened from the Bartender bar is covered by the same rule.
 
 ## The provider seam
 
@@ -217,11 +236,10 @@ How to read the resulting figures, and where each one misleads, is in
   window suffix) from the report rather than from settings. Pairing a
   stale report with the newly selected window's scale is what made the
   chart jump mid-refresh.
-- fixes the popover's content height rather than measuring it. `MenuBarExtra`
-  re-anchors its window whenever the content's height changes, so a measured
-  height made the drop-down jump as data arrived, a provider issue appeared, or a
-  selected slice added its caption. The chart absorbs the slack when the
-  breakdown is short; a long list scrolls instead of growing the window.
+- fixes the popover's content height rather than measuring it, so a refresh
+  cannot resize the panel around the reader. The panel holds its top edge while
+  the content changes height; the chart absorbs the slack when the breakdown is
+  short, and a long list scrolls instead of growing the window.
 - refreshes on a timer, on wake, on wall-clock change, and when the popover opens
   (only if the data is stale)
 - serves the popover and window switching from `SpendResultCache`, which keeps one

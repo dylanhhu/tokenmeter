@@ -8,8 +8,10 @@ struct SpendPopoverView: View {
     let model: AppModel
     /// Bar the tooltip starts pinned to; see `init`.
     private let initialHoverIndex: Int?
-
-    @Environment(\.openWindow) private var openWindow
+    /// How the drop-down asks for the settings window. Injected rather than read
+    /// from the scene environment: the panel is hosted by `StatusItemController`
+    /// in an `NSWindow`, not by a SwiftUI scene.
+    private let openSettingsAction: @MainActor () -> Void
 
     private let width: CGFloat = 372
 
@@ -18,12 +20,12 @@ struct SpendPopoverView: View {
         ///
         /// A `ScrollView` has no ideal height along its scroll axis, so the
         /// column needs an explicit one or the drop-down collapses to its header
-        /// and footer. It is a constant rather than a measurement because
-        /// `MenuBarExtra` re-anchors its window whenever the content's height
-        /// changes: measuring made the popover jump as data arrived, a provider
-        /// issue appeared, or a selected slice added its banner. With a fixed
-        /// height the chart absorbs the slack when the breakdown is short, and
-        /// the list scrolls when it is long.
+        /// and footer. It is a constant rather than a measurement because the
+        /// panel anchors its top edge to the menu bar item: measuring made the
+        /// window lurch as data arrived, a provider issue appeared, or a selected
+        /// slice added its banner. With a fixed height the chart absorbs the
+        /// slack when the breakdown is short, and the list scrolls when it is
+        /// long.
         static let contentHeight: CGFloat = 620
 
         /// Padding around the scrolling column. The column's minimum height is
@@ -37,12 +39,21 @@ struct SpendPopoverView: View {
     /// request for the headline reading, not for the slice inspected last time.
     @State private var selection: Date?
 
-    /// - Parameter initialSelection: bucket to start with selected, and
-    ///   `initialHoverIndex`: bar to start with the tooltip pinned to. Both exist
-    ///   for the snapshot renderer; a live popover starts on the headline period.
-    init(model: AppModel, initialSelection: Date? = nil, initialHoverIndex: Int? = nil) {
+    /// - Parameters:
+    ///   - initialSelection: bucket to start with selected, and `initialHoverIndex`:
+    ///     bar to start with the tooltip pinned to. Both exist for the snapshot
+    ///     renderer; a live popover starts on the headline period.
+    ///   - openSettings: invoked from the popover's menus and empty state. The
+    ///     snapshot renderer passes a no-op.
+    init(
+        model: AppModel,
+        initialSelection: Date? = nil,
+        initialHoverIndex: Int? = nil,
+        openSettings: @escaping @MainActor () -> Void = {}
+    ) {
         self.model = model
         self.initialHoverIndex = initialHoverIndex
+        openSettingsAction = openSettings
         _selection = State(initialValue: initialSelection)
     }
 
@@ -80,7 +91,6 @@ struct SpendPopoverView: View {
             footer
         }
         .frame(width: width)
-        .anchoredWhileOpen()
         .onAppear { model.refreshIfStale() }
     }
 
@@ -442,7 +452,6 @@ struct SpendPopoverView: View {
     }
 
     private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: WindowID.settings)
+        openSettingsAction()
     }
 }

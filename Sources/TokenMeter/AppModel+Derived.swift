@@ -56,6 +56,12 @@ extension AppModel {
         return "\(Money.precise(report.headlineTotal)) \(report.headlineCaption)"
     }
 
+    /// What the status item shows, with its accessibility identity kept separate
+    /// from the reading; see `MenuBarLabel`.
+    var menuBarLabel: MenuBarLabel {
+        MenuBarLabel(style: settings.menuBarStyle, text: menuBarText, toolTip: menuBarTooltip)
+    }
+
     var descriptors: [ProviderDescriptor] {
         ProviderCatalog.descriptors
     }

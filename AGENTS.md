@@ -78,7 +78,7 @@ Sources/TokenMeterKit/          # pure logic, unit-tested, no AppKit UI
   Providers/DemoProvider.swift  # synthetic data for UI work and tests
   Config/                       # settings file, Keychain credential store
   Support/                      # logging, lenient JSON/date parsing, HTTP
-Sources/TokenMeter/             # app layer: MenuBarExtra, popover, settings UI
+Sources/TokenMeter/             # app layer: status item, drop-down panel, settings UI
 Tests/TokenMeterKitTests/       # swift-testing; never hits the network
 docs/                           # architecture, metrics, and provider-authoring guides
 ```
