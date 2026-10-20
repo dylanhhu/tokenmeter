@@ -43,6 +43,34 @@ Both need the item to be ours.
 `MenuBarLabel` separates the two things the item carries: a constant
 accessibility identity and name, and the live reading in the title and tooltip.
 An identity derived from the figure would be useless to anything that stores it.
+Bartender derives identity keys from the accessibility title as well as the
+identifier, so the reading goes in the accessibility value instead. The item has
+no explicit autosave name: AppKit's default, `Item-0`, is the slot key macOS and
+Bartender have recorded (`status:com.dylanhu.TokenMeter::Item-0`), and renaming
+it presents a new item that a manager may file under Hidden.
+
+### Menu bar managers on macOS 27
+
+Bartender 7 hides items by holding a `MenuBarAgent` visibility restriction, an
+allow-list of bundle identifiers
+(`acquireAssertionWithID:origin:allowedSystemItems:allowedBundleIdentifiers:`).
+Items whose app is not on the list are withdrawn from the bar; the manager's
+reveal control, or quitting the manager, drops the restriction.
+
+`MenuBarAgent` only honours that list for apps installed in `/Applications`. A
+copy run from `build/`, a worktree, `~/Applications`, or anywhere else in the
+home folder is withdrawn for as long as the manager hides anything, even though
+the manager lists its bundle identifier, and returns when the restriction drops.
+This was established with otherwise identical probe apps in each location. The
+likely mechanism is that `MenuBarAgent` is sandboxed and asks LaunchServices for
+application information restricted to what it may read, which excludes the home
+folder. To see the real item under a manager, install with `make install` and run
+`/Applications/TokenMeter.app`.
+
+The symptom is visible in `MenuBarAgent`'s log: the item's
+`com.apple.appkit.status-items` scenes are unregistered at the moment of
+`didActivateVisibilityRestriction`, alongside the items the manager hides on
+purpose.
 
 On macOS 27 the system starts an expanded interface session when the item is
 clicked and ends it when the interaction does; the controller shows the panel in

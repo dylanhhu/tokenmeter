@@ -24,6 +24,12 @@ make run        # bundle and launch
 make snapshot   # render UI screenshots to docs/screenshots/
 ```
 
+`make run` launches `build/TokenMeter.app` in place. On macOS 27 that copy never
+appears while a menu bar manager such as Bartender 7 is hiding items, because
+`MenuBarAgent` only honours the manager's allow-list for apps in `/Applications`.
+To see the real item, `make install` and open `/Applications/TokenMeter.app`. Do
+not debug a missing item from a `build/` copy; see `docs/ARCHITECTURE.md`.
+
 ### Visual QA without a display
 
 `make snapshot` renders the popover, onboarding state, and settings window to PNG
