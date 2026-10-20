@@ -35,9 +35,12 @@ final class StatusItemController: NSObject {
         self.openSettings = openSettings
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        // The autosave name persists the item's position and visibility, and gives
-        // menu bar managers a second stable handle on it across launches.
-        item.autosaveName = MenuBarLabel.identifier
+        // No explicit autosave name. AppKit's default, `Item-0`, is the slot key
+        // macOS and Bartender have recorded for this item
+        // (`status:com.dylanhu.TokenMeter::Item-0`); renaming it presents a new
+        // item to every menu bar manager, and one that files new items under
+        // Hidden will hide it again. The accessibility identifier below is what
+        // managers use to tell items apart.
         if #available(macOS 27.0, *) {
             item.expandedInterfaceDelegate = self
         } else {
@@ -67,8 +70,15 @@ final class StatusItemController: NSObject {
             button.image = nil
             button.imagePosition = .noImage
         }
+        // The visible title is the reading; the accessibility title is not.
+        // Bartender derives several identity keys from the accessibility title
+        // (`label:…`, `sourcelabel:…`), so a title that followed the figure would
+        // change the item's identity at every refresh. The figure goes in the
+        // value, where assistive technology still reads it.
         button.setAccessibilityIdentifier(label.accessibilityIdentifier)
         button.setAccessibilityLabel(label.accessibilityLabel)
+        button.setAccessibilityTitle(label.accessibilityLabel)
+        button.setAccessibilityValue(label.title)
         button.setAccessibilityHelp(label.toolTip)
         item.length = NSStatusItem.variableLength
     }

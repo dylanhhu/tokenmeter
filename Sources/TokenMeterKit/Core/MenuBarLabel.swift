@@ -15,8 +15,10 @@ public struct MenuBarLabel: Equatable, Sendable {
     /// stores it.
     public static let identifier = "com.dylanhu.TokenMeter.menuBarItem"
 
-    /// Stable name for assistive technology; the reading itself belongs in the
-    /// value and the tooltip.
+    /// Stable accessibility title and description. The reading belongs in the
+    /// accessibility value and the tooltip: menu bar managers derive identity
+    /// keys from the accessibility title, so a title that followed the figure
+    /// would change the item's identity at every refresh.
     public static let name = "TokenMeter spend"
 
     public let title: String
